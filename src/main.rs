@@ -26,6 +26,7 @@ enum Token {
     ForwardSlash,
     BackSlash,
     Bang,
+    BangEqual,
     Or,
     And,
     Var,
@@ -67,7 +68,12 @@ impl<'a> Lexer<'a> {
                 Some('*') => { return Ok(Token::Star); }
                 Some('/') => { return Ok(Token::ForwardSlash); }
                 Some('\\') => { return Ok(Token::BackSlash); }
-                Some('!') => { return Ok(Token::Bang); }
+                Some('!') => {
+                    return Ok(match self.chars.peek() {
+                        Some('=') => { self.chars.next(); Token::BangEqual }
+                        _ => Token::Bang,
+                    });
+                }
                 Some('(') => { return Ok(Token::LParen); }
                 Some(')') => { return Ok(Token::RParen); }
                 Some('{') => { return Ok(Token::LCurly); }
@@ -191,7 +197,7 @@ impl Function {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Value {
     Int(i64),
     Float(f64),
@@ -206,6 +212,8 @@ enum Opcode {
     Sub,
     Mul,
     Div,
+    Equal,
+    NotEqual,
 }
 
 #[derive(Debug)]
@@ -290,6 +298,8 @@ impl Parser<'_> {
             (Opcode::Add, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l+r)),
             (Opcode::Mul, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l*r)),
             (Opcode::Div, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) if *r != 0 => Opnd::Const(Value::Int(l/r)),
+            (Opcode::Equal, [Opnd::Const(l), Opnd::Const(r)]) => Opnd::Const(Value::Bool(l==r)),
+            (Opcode::NotEqual, [Opnd::Const(l), Opnd::Const(r)]) => Opnd::Const(Value::Bool(l != r)),
             _ => Opnd::Insn(self.prog.push_insn(*self.fun_stack.last().unwrap(), self.block, opcode, operands))
         }
     }
@@ -339,8 +349,13 @@ impl Parser<'_> {
         }?;
         while let Some(token) = self.tokens.peek() {
             let (assoc, op_prec, opcode) = match token {
-                Token::Plus => (Assoc::Any, 1, Opcode::Add),
-                Token::Minus => (Assoc::Left, 1, Opcode::Sub),
+                Token::EqualEqual => (Assoc::Left, 0, Opcode::Equal),
+                Token::BangEqual => (Assoc::Left, 0, Opcode::NotEqual),
+                Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual => {
+                    (Assoc::Left, 1, Opcode::NotEqual)
+                }
+                Token::Plus => (Assoc::Any, 2, Opcode::Add),
+                Token::Minus => (Assoc::Left, 2, Opcode::Sub),
                 Token::Star => (Assoc::Any, 3, Opcode::Mul),
                 Token::ForwardSlash => (Assoc::Left, 3, Opcode::Div),
                 _ => break,
@@ -358,7 +373,7 @@ impl Parser<'_> {
 fn main() -> Result<(), ParseError> {
     // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
     //     var average = (min + max) / 2;");
-    let mut lexer = Lexer::from_str("(1+2)*3; 4/5;");
+    let mut lexer = Lexer::from_str("(1+2)*3; 4/5; 6 == 7; 8 <= 9;");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
     println!("prog: {:#?}", parser.prog);
