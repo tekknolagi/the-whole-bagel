@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Token {
     Ident(String),
     Print,
@@ -51,7 +53,7 @@ impl<'a> Lexer<'a> {
         Lexer { chars: source.chars().peekable() }
     }
 
-    fn next(&mut self) -> Result<Token, LexError> {
+    fn next_token(&mut self) -> Result<Token, LexError> {
         loop {
             match self.chars.next() {
                 None => { return Ok(Token::Eof); }
@@ -147,12 +149,216 @@ impl<'a> Lexer<'a> {
     }
 }
 
-fn main() {
-    let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
-        var average = (min + max) / 2;");
-    loop {
-        let token = lexer.next();
-        println!("token: {token:?}");
-        if token.is_err() || token == Ok(Token::Eof) { break; }
+impl<'a> std::iter::Iterator for Lexer<'a> {
+    type Item = Token;
+    fn next(&mut self) -> Option<Token> {
+        match self.next_token() {
+            Err(e) => { eprintln!("Lexer error: {e:?}"); None }
+            Ok(token) => Some(token),
+        }
     }
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+struct InsnId(usize);
+#[derive(Debug, PartialEq, Copy, Clone)]
+struct BlockId(usize);
+#[derive(Debug, PartialEq, Copy, Clone)]
+struct FunId(usize);
+
+#[derive(Debug)]
+struct Block {
+    insns: Vec<InsnId>,
+}
+
+impl Block {
+    fn new() -> Block {
+        Block { insns: vec![] }
+    }
+}
+
+#[derive(Debug)]
+struct Function {
+    name: String,
+    entry: BlockId,
+    insns: Vec<Insn>,
+    blocks: Vec<Block>,
+}
+
+impl Function {
+    fn new(name: String) -> Function {
+        Function { name, entry: BlockId(0), insns: vec![], blocks: vec![Block::new()] }
+    }
+}
+
+#[derive(Debug)]
+enum Value {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Str(String),
+}
+
+#[derive(Debug)]
+enum Opcode {
+    Print,
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+#[derive(Debug)]
+enum Opnd {
+    Insn(InsnId),
+    Const(Value),
+}
+
+#[derive(Debug)]
+struct Insn {
+    opcode: Opcode,
+    operands: Vec<Opnd>,
+}
+
+#[derive(Debug)]
+struct Program {
+    entry: FunId,
+    funs: Vec<Function>,
+}
+
+#[derive(Debug, PartialEq)]
+enum Assoc {
+    Any,
+    Left,
+    Right
+}
+
+impl Program {
+    fn new() -> Program {
+        let main = Function::new("<toplevel>".into());
+        Program { entry: FunId(0), funs: vec![main] }
+    }
+
+    fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<Opnd>) -> InsnId {
+        let result = InsnId(self.funs[fun.0].insns.len());
+        self.funs[fun.0].insns.push(Insn { opcode, operands });
+        self.funs[fun.0].blocks[block.0].insns.push(result);
+        result
+    }
+}
+
+struct Parser<'a> {
+    tokens: std::iter::Peekable<&'a mut Lexer<'a>>,
+    prog: Program,
+    fun_stack: Vec<FunId>,
+    block: BlockId,
+}
+
+#[derive(Debug, PartialEq)]
+enum ParseError {
+    UnexpectedToken(Token),
+    UnexpectedError,
+}
+
+impl Parser<'_> {
+    fn from_lexer<'a>(lexer: &'a mut Lexer<'a>) -> Parser<'a> {
+        Parser { tokens: lexer.peekable(), prog: Program::new(), fun_stack: vec![], block: BlockId(0) }
+    }
+
+    fn enter_fun(&mut self, fun_id: FunId) {
+        self.fun_stack.push(fun_id);
+        self.block = self.prog.funs[fun_id.0].entry;
+    }
+
+    fn leave_fun(&mut self) {
+        self.fun_stack.pop().expect("Function stack underflow");
+        if let Some(fun_id) = self.fun_stack.last() {
+            self.block = self.prog.funs[fun_id.0].entry;
+        }
+    }
+
+    fn expect(&mut self, expected: Token) -> Result<(), ParseError> {
+        match self.tokens.next() {
+            None => Err(ParseError::UnexpectedError),
+            Some(actual) if expected == actual => Ok(()),
+            Some(actual) => Err(ParseError::UnexpectedToken(actual)),
+        }
+    }
+
+    fn push_insn(&mut self, opcode: Opcode, operands: Vec<Opnd>) -> InsnId {
+        self.prog.push_insn(*self.fun_stack.last().unwrap(), self.block, opcode, operands)
+    }
+
+    fn parse_program(&mut self) -> Result<(), ParseError> {
+        self.enter_fun(self.prog.entry);
+        let mut env = HashMap::new();
+        while let Some(token) = self.tokens.peek() {
+            if *token == Token::Eof { break; }
+            self.parse_statement(&mut env)?;
+        }
+        self.leave_fun();
+        Ok(())
+    }
+
+    fn parse_statement(&mut self, env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
+        match self.tokens.peek() {
+            Some(Token::Print) => {
+                self.tokens.next();
+                let expr = self.parse_expression(&env)?;
+                self.push_insn(Opcode::Print, vec![expr]);
+                Ok(())
+            }
+            Some(token) => { self.parse_expression(&env)?; Ok(()) },
+            None => { Err(ParseError::UnexpectedError) }
+        }?;
+        self.expect(Token::Semicolon)
+    }
+
+    fn op_info(token: Token) -> Result<(Assoc, u32, Opcode), ParseError> {
+        match token {
+            Token::Plus => Ok((Assoc::Any, 1, Opcode::Add)),
+            Token::Minus => Ok((Assoc::Left, 1, Opcode::Sub)),
+            Token::Star => Ok((Assoc::Any, 3, Opcode::Mul)),
+            Token::ForwardSlash => Ok((Assoc::Left, 3, Opcode::Div)),
+            _ => Err(ParseError::UnexpectedToken(token)),
+        }
+    }
+
+    fn parse_expression(&mut self, env: &HashMap<String, Opnd>) -> Result<Opnd, ParseError> {
+        self.parse_(env, 0)
+    }
+
+    fn parse_(&mut self, env: &HashMap<String, Opnd>, prec: u32) -> Result<Opnd, ParseError> {
+        let mut lhs = match self.tokens.peek() {
+            None => Err(ParseError::UnexpectedError),
+            Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
+            Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
+            Some(token) => Err(ParseError::UnexpectedToken(token.clone())),
+        }?;
+        while let Some(token) = self.tokens.peek() {
+            if !matches!(token, Token::Plus | Token::Minus | Token::Star | Token::ForwardSlash) { break; }
+            let (assoc, op_prec, opcode) = Self::op_info(token.clone())?;
+            if op_prec < prec { return Ok(lhs); }
+            self.tokens.next();
+            let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
+            let rhs = self.parse_(&env, next_prec)?;
+            lhs = Opnd::Insn(self.push_insn(opcode, vec![lhs, rhs]));
+        }
+        Ok(lhs)
+    }
+}
+
+fn main() -> Result<(), ParseError> {
+    // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
+    //     var average = (min + max) / 2;");
+    let mut lexer = Lexer::from_str("1+2*3; 4/5;");
+    let mut parser = Parser::from_lexer(&mut lexer);
+    parser.parse_program()?;
+    println!("prog: {:#?}", parser.prog);
+    // loop {
+    //     let token = lexer.next();
+    //     println!("token: {token:?}");
+    //     if token.is_err() || token == Ok(Token::Eof) { break; }
+    // }
+    Ok(())
 }
