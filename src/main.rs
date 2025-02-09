@@ -333,6 +333,12 @@ impl Parser<'_> {
             None => Err(ParseError::UnexpectedError),
             Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
+            Some(Token::LParen) => {
+                self.tokens.next();
+                let result = self.parse_(&env, 0)?;
+                self.expect(Token::RParen);
+                Ok(result)
+            }
             Some(token) => Err(ParseError::UnexpectedToken(token.clone())),
         }?;
         while let Some(token) = self.tokens.peek() {
@@ -351,7 +357,7 @@ impl Parser<'_> {
 fn main() -> Result<(), ParseError> {
     // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
     //     var average = (min + max) / 2;");
-    let mut lexer = Lexer::from_str("1+2*3; 4/5;");
+    let mut lexer = Lexer::from_str("(1+2)*3; 4/5;");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
     println!("prog: {:#?}", parser.prog);
