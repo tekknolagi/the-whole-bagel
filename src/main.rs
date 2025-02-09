@@ -285,8 +285,13 @@ impl Parser<'_> {
         }
     }
 
-    fn push_insn(&mut self, opcode: Opcode, operands: Vec<Opnd>) -> InsnId {
-        self.prog.push_insn(*self.fun_stack.last().unwrap(), self.block, opcode, operands)
+    fn push_insn(&mut self, opcode: Opcode, operands: Vec<Opnd>) -> Opnd {
+        match (&opcode, &operands[..]) {
+            (Opcode::Add, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l+r)),
+            (Opcode::Mul, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l*r)),
+            (Opcode::Div, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) if *r != 0 => Opnd::Const(Value::Int(l/r)),
+            _ => Opnd::Insn(self.prog.push_insn(*self.fun_stack.last().unwrap(), self.block, opcode, operands))
+        }
     }
 
     fn parse_program(&mut self) -> Result<(), ParseError> {
@@ -336,7 +341,7 @@ impl Parser<'_> {
             Some(Token::LParen) => {
                 self.tokens.next();
                 let result = self.parse_(&env, 0)?;
-                self.expect(Token::RParen);
+                self.expect(Token::RParen)?;
                 Ok(result)
             }
             Some(token) => Err(ParseError::UnexpectedToken(token.clone())),
@@ -348,7 +353,7 @@ impl Parser<'_> {
             self.tokens.next();
             let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
             let rhs = self.parse_(&env, next_prec)?;
-            lhs = Opnd::Insn(self.push_insn(opcode, vec![lhs, rhs]));
+            lhs = self.push_insn(opcode, vec![lhs, rhs]);
         }
         Ok(lhs)
     }
