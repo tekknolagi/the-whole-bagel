@@ -27,6 +27,7 @@ enum Token {
     BackSlash,
     Bang,
     BangEqual,
+    Comma,
     Or,
     And,
     Var,
@@ -69,6 +70,7 @@ impl<'a> Lexer<'a> {
                 Some('*') => { return Ok(Token::Star); }
                 Some('/') => { return Ok(Token::ForwardSlash); }
                 Some('\\') => { return Ok(Token::BackSlash); }
+                Some(',') => { return Ok(Token::Comma); }
                 Some('!') => {
                     return Ok(match self.chars.peek() {
                         Some('=') => { self.chars.next(); Token::BangEqual }
@@ -221,6 +223,7 @@ enum Opcode {
     GreaterEqual,
     Less,
     LessEqual,
+    Param(usize),
 }
 
 #[derive(Debug)]
@@ -358,12 +361,31 @@ impl Parser<'_> {
         self.expect(Token::Semicolon)
     }
 
-    fn parse_function(&mut self, env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
+    fn parse_function(&mut self, mut env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
         let name = self.expect_ident()?;
         let fun = self.prog.push_fun(name);
-        self.expect(Token::LParen)?;
-        self.expect(Token::RParen)?;
         self.enter_fun(fun);
+        self.expect(Token::LParen)?;
+        let mut idx = 0;
+        let mut func_env = HashMap::new();
+        loop {
+            match self.tokens.peek() {
+                None => return Err(ParseError::UnexpectedError),
+                Some(Token::RParen) => { break; }
+                Some(Token::Ident(name)) => {
+                    func_env.insert(name.clone(), self.push_insn(Opcode::Param(idx), vec![]));
+                    self.tokens.next();
+                    idx += 1;
+                }
+                Some(actual) => return Err(ParseError::UnexpectedToken(actual.clone())),
+            }
+            if self.tokens.peek() == Some(&Token::Comma) {
+                self.tokens.next();
+            } else {
+                break;
+            }
+        }
+        self.expect(Token::RParen)?;
         self.expect(Token::LCurly)?;
         self.expect(Token::RCurly)?;
         self.leave_fun();
@@ -419,6 +441,8 @@ fn main() -> Result<(), ParseError> {
     let mut lexer = Lexer::from_str("
         (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
         fun empty() { }
+        fun param(a) { }
+        fun params(a, b) { }
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
