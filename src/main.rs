@@ -36,6 +36,7 @@ enum Token {
     Fun,
     Return,
     Class,
+    Nil,
     LParen,
     RParen,
     LCurly,
@@ -113,6 +114,7 @@ impl<'a> Lexer<'a> {
         }
         Ok(
             if result == "print" { Token::Print }
+            else if result == "nil" { Token::Nil }
             else if result == "true" { Token::Bool(true) }
             else if result == "false" { Token::Bool(false) }
             else if result == "or" { Token::Or }
@@ -199,6 +201,7 @@ impl Function {
 
 #[derive(Debug, PartialEq)]
 enum Value {
+    Nil,
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -336,6 +339,7 @@ impl Parser<'_> {
     fn parse_(&mut self, env: &HashMap<String, Opnd>, prec: u32) -> Result<Opnd, ParseError> {
         let mut lhs = match self.tokens.peek() {
             None => Err(ParseError::UnexpectedError),
+            Some(Token::Nil) => { let result = Opnd::Const(Value::Nil); self.tokens.next(); Ok(result) }
             Some(Token::Bool(value)) => { let result = Opnd::Const(Value::Bool(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
@@ -373,7 +377,7 @@ impl Parser<'_> {
 fn main() -> Result<(), ParseError> {
     // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
     //     var average = (min + max) / 2;");
-    let mut lexer = Lexer::from_str("(1+2)*3; 4/5; 6 == 7; 8 <= 9;");
+    let mut lexer = Lexer::from_str("(1+2)*3; 4/5; 6 == 7; print 8 <= 9; print nil;");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
     println!("prog: {:#?}", parser.prog);
