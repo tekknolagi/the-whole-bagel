@@ -336,6 +336,7 @@ impl Parser<'_> {
     fn parse_(&mut self, env: &HashMap<String, Opnd>, prec: u32) -> Result<Opnd, ParseError> {
         let mut lhs = match self.tokens.peek() {
             None => Err(ParseError::UnexpectedError),
+            Some(Token::Bool(value)) => { let result = Opnd::Const(Value::Bool(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
             Some(Token::LParen) => {
