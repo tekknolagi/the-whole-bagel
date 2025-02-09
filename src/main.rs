@@ -61,7 +61,10 @@ impl<'a> Lexer<'a> {
                 Some('"') => { return self.read_string(); }
                 Some(';') => { return Ok(Token::Semicolon); }
                 Some('+') => { return Ok(Token::Plus); }
+                Some('-') => { return Ok(Token::Minus); }
+                Some('*') => { return Ok(Token::Star); }
                 Some('/') => { return Ok(Token::ForwardSlash); }
+                Some('\\') => { return Ok(Token::BackSlash); }
                 Some('!') => { return Ok(Token::Bang); }
                 Some('(') => { return Ok(Token::LParen); }
                 Some(')') => { return Ok(Token::RParen); }
