@@ -217,6 +217,10 @@ enum Opcode {
     Div,
     Equal,
     NotEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
 }
 
 #[derive(Debug)]
@@ -303,6 +307,10 @@ impl Parser<'_> {
             (Opcode::Div, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) if *r != 0 => Opnd::Const(Value::Int(l/r)),
             (Opcode::Equal, [Opnd::Const(l), Opnd::Const(r)]) => Opnd::Const(Value::Bool(l==r)),
             (Opcode::NotEqual, [Opnd::Const(l), Opnd::Const(r)]) => Opnd::Const(Value::Bool(l != r)),
+            (Opcode::Greater, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l>r)),
+            (Opcode::GreaterEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l>=r)),
+            (Opcode::Less, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<r)),
+            (Opcode::LessEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<=r)),
             _ => Opnd::Insn(self.prog.push_insn(*self.fun_stack.last().unwrap(), self.block, opcode, operands))
         }
     }
@@ -355,9 +363,10 @@ impl Parser<'_> {
             let (assoc, op_prec, opcode) = match token {
                 Token::EqualEqual => (Assoc::Left, 0, Opcode::Equal),
                 Token::BangEqual => (Assoc::Left, 0, Opcode::NotEqual),
-                Token::Greater | Token::GreaterEqual | Token::Less | Token::LessEqual => {
-                    (Assoc::Left, 1, Opcode::NotEqual)
-                }
+                Token::Greater => (Assoc::Left, 1, Opcode::Greater),
+                Token::GreaterEqual => (Assoc::Left, 1, Opcode::GreaterEqual),
+                Token::Less => (Assoc::Left, 1, Opcode::Less),
+                Token::LessEqual => (Assoc::Left, 1, Opcode::LessEqual),
                 Token::Plus => (Assoc::Any, 2, Opcode::Add),
                 Token::Minus => (Assoc::Left, 2, Opcode::Sub),
                 Token::Star => (Assoc::Any, 3, Opcode::Mul),
@@ -377,7 +386,7 @@ impl Parser<'_> {
 fn main() -> Result<(), ParseError> {
     // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
     //     var average = (min + max) / 2;");
-    let mut lexer = Lexer::from_str("(1+2)*3; 4/5; 6 == 7; print 8 <= 9; print nil;");
+    let mut lexer = Lexer::from_str("(1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
     println!("prog: {:#?}", parser.prog);
