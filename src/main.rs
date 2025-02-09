@@ -319,16 +319,6 @@ impl Parser<'_> {
         self.expect(Token::Semicolon)
     }
 
-    fn op_info(token: Token) -> Result<(Assoc, u32, Opcode), ParseError> {
-        match token {
-            Token::Plus => Ok((Assoc::Any, 1, Opcode::Add)),
-            Token::Minus => Ok((Assoc::Left, 1, Opcode::Sub)),
-            Token::Star => Ok((Assoc::Any, 3, Opcode::Mul)),
-            Token::ForwardSlash => Ok((Assoc::Left, 3, Opcode::Div)),
-            _ => Err(ParseError::UnexpectedToken(token)),
-        }
-    }
-
     fn parse_expression(&mut self, env: &HashMap<String, Opnd>) -> Result<Opnd, ParseError> {
         self.parse_(env, 0)
     }
@@ -348,8 +338,13 @@ impl Parser<'_> {
             Some(token) => Err(ParseError::UnexpectedToken(token.clone())),
         }?;
         while let Some(token) = self.tokens.peek() {
-            if !matches!(token, Token::Plus | Token::Minus | Token::Star | Token::ForwardSlash) { break; }
-            let (assoc, op_prec, opcode) = Self::op_info(token.clone())?;
+            let (assoc, op_prec, opcode) = match token {
+                Token::Plus => (Assoc::Any, 1, Opcode::Add),
+                Token::Minus => (Assoc::Left, 1, Opcode::Sub),
+                Token::Star => (Assoc::Any, 3, Opcode::Mul),
+                Token::ForwardSlash => (Assoc::Left, 3, Opcode::Div),
+                _ => break,
+            };
             if op_prec < prec { return Ok(lhs); }
             self.tokens.next();
             let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
