@@ -254,6 +254,12 @@ impl Program {
         Program { entry: FunId(0), funs: vec![main] }
     }
 
+    fn push_fun(&mut self, name: String) -> FunId {
+        let fun = FunId(self.funs.len());
+        self.funs.push(Function::new(name));
+        fun
+    }
+
     fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<Opnd>) -> InsnId {
         let result = InsnId(self.funs[fun.0].insns.len());
         self.funs[fun.0].insns.push(Insn { opcode, operands });
@@ -300,6 +306,14 @@ impl Parser<'_> {
         }
     }
 
+    fn expect_ident(&mut self) -> Result<String, ParseError> {
+        match self.tokens.next() {
+            Some(Token::Ident(name)) => Ok(name.clone()),
+            None => Err(ParseError::UnexpectedError),
+            Some(actual) => Err(ParseError::UnexpectedToken(actual)),
+        }
+    }
+
     fn push_insn(&mut self, opcode: Opcode, operands: Vec<Opnd>) -> Opnd {
         match (&opcode, &operands[..]) {
             (Opcode::Add, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l+r)),
@@ -326,7 +340,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn parse_statement(&mut self, env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
+    fn parse_statement(&mut self, mut env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
         match self.tokens.peek() {
             Some(Token::Print) => {
                 self.tokens.next();
@@ -334,10 +348,26 @@ impl Parser<'_> {
                 self.push_insn(Opcode::Print, vec![expr]);
                 Ok(())
             }
+            Some(Token::Fun) => {
+                self.tokens.next();
+                return self.parse_function(&mut env);  // no semicolon
+            }
             Some(token) => { self.parse_expression(&env)?; Ok(()) },
             None => { Err(ParseError::UnexpectedError) }
         }?;
         self.expect(Token::Semicolon)
+    }
+
+    fn parse_function(&mut self, env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
+        let name = self.expect_ident()?;
+        let fun = self.prog.push_fun(name);
+        self.expect(Token::LParen)?;
+        self.expect(Token::RParen)?;
+        self.enter_fun(fun);
+        self.expect(Token::LCurly)?;
+        self.expect(Token::RCurly)?;
+        self.leave_fun();
+        Ok(())
     }
 
     fn parse_expression(&mut self, env: &HashMap<String, Opnd>) -> Result<Opnd, ParseError> {
@@ -386,7 +416,10 @@ impl Parser<'_> {
 fn main() -> Result<(), ParseError> {
     // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
     //     var average = (min + max) / 2;");
-    let mut lexer = Lexer::from_str("(1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;");
+    let mut lexer = Lexer::from_str("
+        (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
+        fun empty() { }
+    ");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
     println!("prog: {:#?}", parser.prog);
