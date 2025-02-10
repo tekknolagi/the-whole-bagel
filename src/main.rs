@@ -169,14 +169,20 @@ impl<'a> std::iter::Iterator for Lexer<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone)]
 struct InsnId(usize);
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone)]
 struct BlockId(usize);
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone)]
 struct FunId(usize);
 
 impl std::fmt::Display for InsnId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "v{}", self.0)
+    }
+}
+
+impl std::fmt::Debug for InsnId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(f, "v{}", self.0)
     }
@@ -188,7 +194,19 @@ impl std::fmt::Display for BlockId {
     }
 }
 
+impl std::fmt::Debug for BlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "bb{}", self.0)
+    }
+}
+
 impl std::fmt::Display for FunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "fn{}", self.0)
+    }
+}
+
+impl std::fmt::Debug for FunId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(f, "fn{}", self.0)
     }
@@ -260,10 +278,19 @@ enum Opcode {
     Param(usize),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Opnd {
     Insn(InsnId),
     Const(Value),
+}
+
+impl std::fmt::Debug for Opnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Opnd::Insn(insn_id) => write!(f, "{insn_id}"),
+            Opnd::Const(val) => write!(f, "{val:?}"),
+        }
+    }
 }
 
 #[derive(Debug)]
