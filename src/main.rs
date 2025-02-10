@@ -109,7 +109,7 @@ impl<'a> Lexer<'a> {
         result.push(c);
         loop {
             match self.chars.peek() {
-                Some(c) if c.is_alphabetic() => result.push(*c),
+                Some(c) if c.is_alphabetic() || *c == '_' => result.push(*c),
                 _ => break,
             }
             self.chars.next();
