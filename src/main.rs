@@ -276,6 +276,7 @@ enum Opcode {
     Less,
     LessEqual,
     Param(usize),
+    ClosureRef(usize),
 }
 
 #[derive(Clone)]
@@ -344,6 +345,52 @@ impl std::fmt::Display for Program {
     }
 }
 
+enum VarKind {
+    Closure,
+    Local,
+}
+
+struct Env<'a> {
+    bindings: HashMap<String, Opnd>,
+    parent: Option<&'a Env<'a>>,
+}
+
+impl<'a> Env<'a> {
+    fn new() -> Env<'a> {
+        Env { bindings: HashMap::new(), parent: None }
+    }
+
+    fn from_parent(parent: &'a Env<'a>) -> Env<'a> {
+        Env { bindings: HashMap::new(), parent: Some(parent) }
+    }
+
+    fn lookup(&self, name: &String) -> Option<(VarKind, Opnd)> {
+        self.lookup_(VarKind::Local, name)
+    }
+
+    fn lookup_(&self, kind: VarKind, name: &String) -> Option<(VarKind, Opnd)> {
+        match self.bindings.get(name) {
+            None if self.parent.is_none() => None,
+            None => self.parent.as_ref().unwrap().lookup_(VarKind::Closure, name),
+            Some(value) => Some((kind, value.clone())),
+        }
+    }
+
+    fn define(&mut self, name: &String, value: Opnd) {
+        assert!(self.bindings.get(name).is_none());
+        self.bindings.insert(name.clone(), value);
+    }
+
+    fn set(&mut self, name: &String, value: Opnd) -> Option<VarKind> {
+        use std::collections::hash_map::Entry;
+        match (self.bindings.entry(name.clone()), &mut self.parent) {
+            (Entry::Vacant(entry), None) => None,
+            (Entry::Vacant(entry), Some(_)) => Some(VarKind::Closure),
+            (Entry::Occupied(mut entry), _) => { entry.insert(value); Some(VarKind::Local) }
+        }
+    }
+}
+
 struct Parser<'a> {
     tokens: std::iter::Peekable<&'a mut Lexer<'a>>,
     prog: Program,
@@ -408,7 +455,7 @@ impl Parser<'_> {
 
     fn parse_program(&mut self) -> Result<(), ParseError> {
         self.enter_fun(self.prog.entry);
-        let mut env = HashMap::new();
+        let mut env = Env::new();
         while let Some(token) = self.tokens.peek() {
             if *token == Token::Eof { break; }
             self.parse_statement(&mut env)?;
@@ -417,7 +464,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn parse_statement(&mut self, mut env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
+    fn parse_statement(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
         match self.tokens.peek() {
             Some(Token::Print) => {
                 self.tokens.next();
@@ -440,7 +487,7 @@ impl Parser<'_> {
                 let name = self.expect_ident()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression(&env)?;
-                env.insert(name, value);
+                env.define(&name, value);
                 Ok(())
             }
             Some(token) => { self.parse_expression(&env)?; Ok(()) },
@@ -449,17 +496,20 @@ impl Parser<'_> {
         self.expect(Token::Semicolon)
     }
 
-    fn parse_function(&mut self, mut env: &mut HashMap<String, Opnd>) -> Result<(), ParseError> {
+    fn parse_function(&mut self, env: &Env) -> Result<(), ParseError> {
         let name = self.expect_ident()?;
         let fun = self.prog.push_fun(name);
         self.enter_fun(fun);
         self.expect(Token::LParen)?;
         let mut idx = 0;
-        let mut func_env = HashMap::new();
+        // TODO(max): We need a way to find out if a variable is from an outer context (global,
+        // closure) when using it so we don't bake in the value at compile-time.
+        let mut func_env = Env::from_parent(&env);
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
-                    func_env.insert(name.clone(), self.push_insn(Opcode::Param(idx), vec![]));
+                    let name = name.clone();
+                    func_env.define(&name, self.push_insn(Opcode::Param(idx), vec![]));
                     self.tokens.next();
                     idx += 1;
                 }
@@ -481,11 +531,11 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn parse_expression(&mut self, env: &HashMap<String, Opnd>) -> Result<Opnd, ParseError> {
+    fn parse_expression(&mut self, env: &Env) -> Result<Opnd, ParseError> {
         self.parse_(env, 0)
     }
 
-    fn parse_(&mut self, env: &HashMap<String, Opnd>, prec: u32) -> Result<Opnd, ParseError> {
+    fn parse_(&mut self, env: &Env, prec: u32) -> Result<Opnd, ParseError> {
         let mut lhs = match self.tokens.peek() {
             None => Err(ParseError::UnexpectedError),
             Some(Token::Nil) => { let result = Opnd::Const(Value::Nil); self.tokens.next(); Ok(result) }
@@ -493,14 +543,21 @@ impl Parser<'_> {
             Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
             Some(Token::Ident(name)) => {
-                if env.contains_key(name) {
-                    let result = &env[name];
-                    self.tokens.next();
-                    Ok(result.clone())
-                } else {
-                    let result = Err(ParseError::UnboundName(name.clone()));
-                    self.tokens.next();
-                    result
+                match env.lookup(name) {
+                    Some((VarKind::Local, value)) => {
+                        self.tokens.next();
+                        Ok(value)
+                    }
+                    Some((VarKind::Closure, value)) => {
+                        self.tokens.next();
+                        // TODO(max): Figure out a local numbering scheme I guess
+                        Ok(self.push_insn(Opcode::ClosureRef(0), vec![]))
+                    }
+                    None => {
+                        let result = Err(ParseError::UnboundName(name.clone()));
+                        self.tokens.next();
+                        result
+                    }
                 }
             }
             Some(Token::LParen) => {
@@ -544,6 +601,8 @@ fn main() -> Result<(), ParseError> {
         fun inc(a) { return a+1; }
         fun params(a, b) { }
         var x = 1;
+        fun read_global() { return x; }
+        fun write_global() { x = 2; }
         print x;
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
