@@ -458,19 +458,16 @@ impl Parser<'_> {
         let mut func_env = HashMap::new();
         loop {
             match self.tokens.peek() {
-                None => return Err(ParseError::UnexpectedError),
-                Some(Token::RParen) => { break; }
                 Some(Token::Ident(name)) => {
                     func_env.insert(name.clone(), self.push_insn(Opcode::Param(idx), vec![]));
                     self.tokens.next();
                     idx += 1;
                 }
-                Some(actual) => return Err(ParseError::UnexpectedToken(actual.clone())),
+                _ => break,
             }
-            if self.tokens.peek() == Some(&Token::Comma) {
-                self.tokens.next();
-            } else {
-                break;
+            match self.tokens.peek() {
+                Some(Token::Comma) => { self.tokens.next(); }
+                _ => break,
             }
         }
         self.expect(Token::RParen)?;
