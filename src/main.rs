@@ -435,6 +435,14 @@ impl Parser<'_> {
                 self.tokens.next();
                 return self.parse_function(&mut env);  // no semicolon
             }
+            Some(Token::Var) => {
+                self.tokens.next();
+                let name = self.expect_ident()?;
+                self.expect(Token::Equal)?;
+                let value = self.parse_expression(&env)?;
+                env.insert(name, value);
+                Ok(())
+            }
             Some(token) => { self.parse_expression(&env)?; Ok(()) },
             None => { Err(ParseError::UnexpectedError) }
         }?;
@@ -538,6 +546,8 @@ fn main() -> Result<(), ParseError> {
         fun empty() { return nil; }
         fun inc(a) { return a+1; }
         fun params(a, b) { }
+        var x = 1;
+        print x;
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
