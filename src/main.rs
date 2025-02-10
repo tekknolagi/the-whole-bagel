@@ -176,6 +176,24 @@ struct BlockId(usize);
 #[derive(Debug, PartialEq, Copy, Clone)]
 struct FunId(usize);
 
+impl std::fmt::Display for InsnId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "v{}", self.0)
+    }
+}
+
+impl std::fmt::Display for BlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "bb{}", self.0)
+    }
+}
+
+impl std::fmt::Display for FunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "fn{}", self.0)
+    }
+}
+
 #[derive(Debug)]
 struct Block {
     insns: Vec<InsnId>,
@@ -198,6 +216,21 @@ struct Function {
 impl Function {
     fn new(name: String) -> Function {
         Function { name, entry: BlockId(0), insns: vec![], blocks: vec![Block::new()] }
+    }
+}
+
+impl std::fmt::Display for Function {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        writeln!(f, "fun {} (entry {}) {{", self.name, self.entry)?;
+        for (idx, block) in self.blocks.iter().enumerate() {
+            let block_id = BlockId(idx);
+            writeln!(f, "  {block_id} {{")?;
+            for insn_id in &self.blocks[block_id.0].insns {
+                writeln!(f, "    {insn_id} = {:?}", self.insns[insn_id.0])?;
+            }
+            writeln!(f, "  }}")?;
+        }
+        writeln!(f, "}}")
     }
 }
 
@@ -270,6 +303,17 @@ impl Program {
         self.funs[fun.0].insns.push(Insn { opcode, operands });
         self.funs[fun.0].blocks[block.0].insns.push(result);
         result
+    }
+}
+
+impl std::fmt::Display for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        writeln!(f, "Entry: {}", self.entry)?;
+        for (idx, fun) in self.funs.iter().enumerate() {
+            let fun_id = FunId(idx);
+            write!(f, "{fun_id}: {fun}")?;
+        }
+        Ok(())
     }
 }
 
@@ -470,7 +514,7 @@ fn main() -> Result<(), ParseError> {
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
-    println!("prog: {:#?}", parser.prog);
+    println!("{}", parser.prog);
     // loop {
     //     let token = lexer.next();
     //     println!("token: {token:?}");
