@@ -201,7 +201,7 @@ impl Function {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Value {
     Nil,
     Int(i64),
@@ -213,6 +213,7 @@ enum Value {
 #[derive(Debug)]
 enum Opcode {
     Print,
+    Return,
     Add,
     Sub,
     Mul,
@@ -226,7 +227,7 @@ enum Opcode {
     Param(usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Opnd {
     Insn(InsnId),
     Const(Value),
@@ -264,6 +265,7 @@ impl Program {
     }
 
     fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<Opnd>) -> InsnId {
+        // TODO(max): Catch double terminators
         let result = InsnId(self.funs[fun.0].insns.len());
         self.funs[fun.0].insns.push(Insn { opcode, operands });
         self.funs[fun.0].blocks[block.0].insns.push(result);
@@ -282,6 +284,7 @@ struct Parser<'a> {
 enum ParseError {
     UnexpectedToken(Token),
     UnexpectedError,
+    UnboundName(String),
 }
 
 impl Parser<'_> {
@@ -351,6 +354,12 @@ impl Parser<'_> {
                 self.push_insn(Opcode::Print, vec![expr]);
                 Ok(())
             }
+            Some(Token::Return) => {
+                self.tokens.next();
+                let expr = self.parse_expression(&env)?;
+                self.push_insn(Opcode::Return, vec![expr]);
+                Ok(())
+            }
             Some(Token::Fun) => {
                 self.tokens.next();
                 return self.parse_function(&mut env);  // no semicolon
@@ -387,6 +396,10 @@ impl Parser<'_> {
         }
         self.expect(Token::RParen)?;
         self.expect(Token::LCurly)?;
+        while let Some(token) = self.tokens.peek() {
+            if *token == Token::RCurly { break; }
+            self.parse_statement(&mut func_env)?;
+        }
         self.expect(Token::RCurly)?;
         self.leave_fun();
         Ok(())
@@ -403,6 +416,17 @@ impl Parser<'_> {
             Some(Token::Bool(value)) => { let result = Opnd::Const(Value::Bool(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
+            Some(Token::Ident(name)) => {
+                if env.contains_key(name) {
+                    let result = &env[name];
+                    self.tokens.next();
+                    Ok(result.clone())
+                } else {
+                    let result = Err(ParseError::UnboundName(name.clone()));
+                    self.tokens.next();
+                    result
+                }
+            }
             Some(Token::LParen) => {
                 self.tokens.next();
                 let result = self.parse_(&env, 0)?;
@@ -440,8 +464,8 @@ fn main() -> Result<(), ParseError> {
     //     var average = (min + max) / 2;");
     let mut lexer = Lexer::from_str("
         (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
-        fun empty() { }
-        fun param(a) { }
+        fun empty() { return nil; }
+        fun param(a) { return a; }
         fun params(a, b) { }
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
