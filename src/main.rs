@@ -536,7 +536,7 @@ fn main() -> Result<(), ParseError> {
     let mut lexer = Lexer::from_str("
         (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
         fun empty() { return nil; }
-        fun param(a) { return a; }
+        fun inc(a) { return a+1; }
         fun params(a, b) { }
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
