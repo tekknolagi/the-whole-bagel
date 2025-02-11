@@ -540,7 +540,7 @@ impl Parser<'_> {
                 self.expect(Token::RParen)?;
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
-                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![]);
+                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![cond]);
 
                 self.block = iftrue_block;
                 let mut iftrue_env = env.clone();
