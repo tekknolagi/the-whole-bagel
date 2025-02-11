@@ -679,23 +679,39 @@ impl Parser<'_> {
         }?;
         while let Some(token) = self.tokens.peek() {
             let (assoc, op_prec, opcode) = match token {
-                Token::EqualEqual => (Assoc::Left, 0, Opcode::Equal),
-                Token::BangEqual => (Assoc::Left, 0, Opcode::NotEqual),
-                Token::Greater => (Assoc::Left, 1, Opcode::Greater),
-                Token::GreaterEqual => (Assoc::Left, 1, Opcode::GreaterEqual),
-                Token::Less => (Assoc::Left, 1, Opcode::Less),
-                Token::LessEqual => (Assoc::Left, 1, Opcode::LessEqual),
-                Token::Plus => (Assoc::Any, 2, Opcode::Add),
-                Token::Minus => (Assoc::Left, 2, Opcode::Sub),
-                Token::Star => (Assoc::Any, 3, Opcode::Mul),
-                Token::ForwardSlash => (Assoc::Left, 3, Opcode::Div),
+                Token::And => (Assoc::Left, 0, Opcode::Print),  // not really Print; just used for precedence
+                Token::Or => (Assoc::Left, 0, Opcode::Print),  // not really Print; just used for precedence
+                Token::EqualEqual => (Assoc::Left, 1, Opcode::Equal),
+                Token::BangEqual => (Assoc::Left, 1, Opcode::NotEqual),
+                Token::Greater => (Assoc::Left, 2, Opcode::Greater),
+                Token::GreaterEqual => (Assoc::Left, 2, Opcode::GreaterEqual),
+                Token::Less => (Assoc::Left, 2, Opcode::Less),
+                Token::LessEqual => (Assoc::Left, 2, Opcode::LessEqual),
+                Token::Plus => (Assoc::Any, 3, Opcode::Add),
+                Token::Minus => (Assoc::Left, 3, Opcode::Sub),
+                Token::Star => (Assoc::Any, 4, Opcode::Mul),
+                Token::ForwardSlash => (Assoc::Left, 4, Opcode::Div),
                 _ => break,
             };
+            let token = token.clone();
             if op_prec < prec { return Ok(lhs); }
             self.tokens.next();
             let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
-            let rhs = self.parse_(&mut env, next_prec)?;
-            lhs = self.push_insn(opcode, vec![lhs, rhs]);
+            if token == Token::And {
+                todo!("ssa from `and' keyword")
+            } else if token == Token::Or {
+                let iftrue_block = self.new_block();
+                let iffalse_block = self.new_block();
+                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![lhs.clone()]);
+                self.block = iffalse_block;
+                let rhs = self.parse_(&mut env, next_prec)?;
+                self.push_insn(Opcode::Branch(iftrue_block), vec![]);
+                self.block = iftrue_block;
+                lhs = self.push_insn(Opcode::Phi, vec![lhs, rhs])
+            } else {
+                let rhs = self.parse_(&mut env, next_prec)?;
+                lhs = self.push_insn(opcode, vec![lhs, rhs]);
+            }
         }
         Ok(lhs)
     }
