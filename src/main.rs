@@ -291,6 +291,7 @@ enum Value {
 
 #[derive(Debug)]
 enum Opcode {
+    Abort,
     Print,
     Return,
     Add,
@@ -679,8 +680,8 @@ impl Parser<'_> {
         }?;
         while let Some(token) = self.tokens.peek() {
             let (assoc, op_prec, opcode) = match token {
-                Token::And => (Assoc::Left, 0, Opcode::Print),  // not really Print; just used for precedence
-                Token::Or => (Assoc::Left, 0, Opcode::Print),  // not really Print; just used for precedence
+                Token::And => (Assoc::Left, 0, Opcode::Abort),  // not really Abort; just used for precedence
+                Token::Or => (Assoc::Left, 0, Opcode::Abort),  // not really Abort; just used for precedence
                 Token::EqualEqual => (Assoc::Left, 1, Opcode::Equal),
                 Token::BangEqual => (Assoc::Left, 1, Opcode::NotEqual),
                 Token::Greater => (Assoc::Left, 2, Opcode::Greater),
