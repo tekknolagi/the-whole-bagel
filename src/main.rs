@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
@@ -32,6 +32,7 @@ enum Token {
     And,
     Var,
     If,
+    Else,
     While,
     For,
     Fun,
@@ -123,6 +124,7 @@ impl<'a> Lexer<'a> {
             else if result == "and" { Token::And }
             else if result == "var" { Token::Var }
             else if result == "if" { Token::If }
+            else if result == "else" { Token::Else }
             else if result == "while" { Token::While }
             else if result == "for" { Token::For }
             else if result == "fun" { Token::Fun }
@@ -235,6 +237,12 @@ impl Function {
     fn new(name: String) -> Function {
         Function { name, entry: BlockId(0), insns: vec![], blocks: vec![Block::new()] }
     }
+
+    fn new_block(&mut self) -> BlockId {
+        let result = BlockId(self.blocks.len());
+        self.blocks.push(Block::new());
+        result
+    }
 }
 
 impl std::fmt::Display for Function {
@@ -277,9 +285,13 @@ enum Opcode {
     LessEqual,
     Param(usize),
     ClosureRef(usize),
+    ClosureSet(usize),
+    Branch(BlockId),
+    CondBranch(BlockId, BlockId),
+    Phi,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum Opnd {
     Insn(InsnId),
     Const(Value),
@@ -350,18 +362,20 @@ enum VarKind {
     Local,
 }
 
+#[derive(Clone)]
 struct Env<'a> {
+    fun: FunId,
     bindings: HashMap<String, Opnd>,
     parent: Option<&'a Env<'a>>,
 }
 
 impl<'a> Env<'a> {
-    fn new() -> Env<'a> {
-        Env { bindings: HashMap::new(), parent: None }
+    fn new(fun: FunId) -> Env<'a> {
+        Env { fun, bindings: HashMap::new(), parent: None }
     }
 
-    fn from_parent(parent: &'a Env<'a>) -> Env<'a> {
-        Env { bindings: HashMap::new(), parent: Some(parent) }
+    fn from_parent(fun: FunId, parent: &'a Env<'a>) -> Env<'a> {
+        Env { fun, bindings: HashMap::new(), parent: Some(parent) }
     }
 
     fn lookup(&self, name: &String) -> Option<(VarKind, Opnd)> {
@@ -422,6 +436,10 @@ impl Parser<'_> {
         }
     }
 
+    fn fun(&self) -> FunId {
+        *self.fun_stack.last().expect("Function stack underflow")
+    }
+
     fn expect(&mut self, expected: Token) -> Result<(), ParseError> {
         match self.tokens.next() {
             None => Err(ParseError::UnexpectedError),
@@ -438,6 +456,11 @@ impl Parser<'_> {
         }
     }
 
+    fn new_block(&mut self) -> BlockId {
+        let fun = self.fun();
+        self.prog.funs[fun.0].new_block()
+    }
+
     fn push_insn(&mut self, opcode: Opcode, operands: Vec<Opnd>) -> Opnd {
         match (&opcode, &operands[..]) {
             (Opcode::Add, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l+r)),
@@ -449,13 +472,13 @@ impl Parser<'_> {
             (Opcode::GreaterEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l>=r)),
             (Opcode::Less, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<r)),
             (Opcode::LessEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<=r)),
-            _ => Opnd::Insn(self.prog.push_insn(*self.fun_stack.last().unwrap(), self.block, opcode, operands))
+            _ => Opnd::Insn(self.prog.push_insn(self.fun(), self.block, opcode, operands))
         }
     }
 
     fn parse_program(&mut self) -> Result<(), ParseError> {
         self.enter_fun(self.prog.entry);
-        let mut env = Env::new();
+        let mut env = Env::new(self.prog.entry);
         while let Some(token) = self.tokens.peek() {
             if *token == Token::Eof { break; }
             self.parse_statement(&mut env)?;
@@ -464,17 +487,37 @@ impl Parser<'_> {
         Ok(())
     }
 
+    fn merge(&mut self, left: Option<&Opnd>, right: Option<&Opnd>) {
+        match (left, right) {
+            (Some(left), Some(right)) if left == right => {}
+            (Some(left), Some(right)) => { self.push_insn(Opcode::Phi, vec![left.clone(), right.clone()]); }
+            (Some(value), None) | (None, Some(value)) => { self.push_insn(Opcode::Phi, vec![value.clone(), Opnd::Const(Value::Nil)]); }
+            (None, None) => panic!("Cannot happen"),
+        }
+    }
+
+    fn merge_envs(&mut self, left: &Env, right: &Env) {
+        let mut all_keys: HashSet<&String> = HashSet::new();
+        all_keys.extend(&mut left.bindings.keys());
+        all_keys.extend(&mut right.bindings.keys());
+        for key in all_keys {
+            let left_value = left.bindings.get(key);
+            let right_value = right.bindings.get(key);
+            self.merge(left_value, right_value);
+        }
+    }
+
     fn parse_statement(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
         match self.tokens.peek() {
             Some(Token::Print) => {
                 self.tokens.next();
-                let expr = self.parse_expression(&env)?;
+                let expr = self.parse_expression(&mut env)?;
                 self.push_insn(Opcode::Print, vec![expr]);
                 Ok(())
             }
             Some(Token::Return) => {
                 self.tokens.next();
-                let expr = self.parse_expression(&env)?;
+                let expr = self.parse_expression(&mut env)?;
                 self.push_insn(Opcode::Return, vec![expr]);
                 Ok(())
             }
@@ -486,11 +529,52 @@ impl Parser<'_> {
                 self.tokens.next();
                 let name = self.expect_ident()?;
                 self.expect(Token::Equal)?;
-                let value = self.parse_expression(&env)?;
+                let value = self.parse_expression(&mut env)?;
                 env.define(&name, value);
                 Ok(())
             }
-            Some(token) => { self.parse_expression(&env)?; Ok(()) },
+            Some(Token::If) => {
+                self.tokens.next();
+                self.expect(Token::LParen)?;
+                let cond = self.parse_expression(&mut env)?;
+                self.expect(Token::RParen)?;
+                let iftrue_block = self.new_block();
+                let iffalse_block = self.new_block();
+                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![]);
+
+                self.block = iftrue_block;
+                let mut iftrue_env = env.clone();
+                self.parse_statement(&mut iftrue_env)?;
+                let iftrue_end = self.block;
+
+                if self.tokens.peek() == Some(&Token::Else) {
+                    self.tokens.next();
+                    self.block = iffalse_block;
+                    let mut iffalse_env = env.clone();
+                    self.parse_statement(&mut iffalse_env)?;
+                    let join_block = self.new_block();
+                    self.push_insn(Opcode::Branch(join_block), vec![]);
+
+                    self.block = join_block;
+                    self.merge_envs(&iftrue_env, &iffalse_env);
+                    self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(join_block), vec![]);
+                } else {
+                    self.block = iffalse_block;
+                    self.merge_envs(&env, &iftrue_env);
+                    self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(iffalse_block), vec![]);
+                }
+                return Ok(());  // no semicolon
+            }
+            Some(Token::LCurly) => {
+                // New scope
+                self.tokens.next();
+                while let Some(token) = self.tokens.peek() {
+                    if *token == Token::RCurly { break; }
+                    self.parse_statement(&mut env)?;
+                }
+                return self.expect(Token::RCurly);  // no semicolon
+            }
+            Some(token) => { self.parse_expression(&mut env)?; Ok(()) },
             None => { Err(ParseError::UnexpectedError) }
         }?;
         self.expect(Token::Semicolon)
@@ -504,7 +588,7 @@ impl Parser<'_> {
         let mut idx = 0;
         // TODO(max): We need a way to find out if a variable is from an outer context (global,
         // closure) when using it so we don't bake in the value at compile-time.
-        let mut func_env = Env::from_parent(&env);
+        let mut func_env = Env::from_parent(fun, &env);
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
@@ -531,11 +615,11 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn parse_expression(&mut self, env: &Env) -> Result<Opnd, ParseError> {
+    fn parse_expression(&mut self, mut env: &mut Env) -> Result<Opnd, ParseError> {
         self.parse_(env, 0)
     }
 
-    fn parse_(&mut self, env: &Env, prec: u32) -> Result<Opnd, ParseError> {
+    fn parse_(&mut self, mut env: &mut Env, prec: u32) -> Result<Opnd, ParseError> {
         let mut lhs = match self.tokens.peek() {
             None => Err(ParseError::UnexpectedError),
             Some(Token::Nil) => { let result = Opnd::Const(Value::Nil); self.tokens.next(); Ok(result) }
@@ -543,26 +627,31 @@ impl Parser<'_> {
             Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
             Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
             Some(Token::Ident(name)) => {
-                match env.lookup(name) {
-                    Some((VarKind::Local, value)) => {
-                        self.tokens.next();
-                        Ok(value)
-                    }
-                    Some((VarKind::Closure, value)) => {
-                        self.tokens.next();
+                let name = name.clone();
+                self.tokens.next();
+                if self.tokens.peek() == Some(&Token::Equal) {
+                    // Assignment
+                    self.tokens.next();
+                    // TODO(max): Operator precedence ...?
+                    let value = self.parse_expression(&mut env)?;
+                    match env.set(&name, value.clone()) {
+                        Some(VarKind::Local) => Ok(value),
                         // TODO(max): Figure out a local numbering scheme I guess
-                        Ok(self.push_insn(Opcode::ClosureRef(0), vec![]))
+                        Some(VarKind::Closure) => Ok(self.push_insn(Opcode::ClosureSet(0), vec![value])),
+                        None => Err(ParseError::UnboundName(name)),
                     }
-                    None => {
-                        let result = Err(ParseError::UnboundName(name.clone()));
-                        self.tokens.next();
-                        result
+                } else {
+                    match env.lookup(&name) {
+                        Some((VarKind::Local, value)) => Ok(value),
+                        // TODO(max): Figure out a local numbering scheme I guess
+                        Some((VarKind::Closure, value)) => Ok(self.push_insn(Opcode::ClosureRef(0), vec![])),
+                        None => Err(ParseError::UnboundName(name)),
                     }
                 }
             }
             Some(Token::LParen) => {
                 self.tokens.next();
-                let result = self.parse_(&env, 0)?;
+                let result = self.parse_(&mut env, 0)?;
                 self.expect(Token::RParen)?;
                 Ok(result)
             }
@@ -585,7 +674,7 @@ impl Parser<'_> {
             if op_prec < prec { return Ok(lhs); }
             self.tokens.next();
             let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
-            let rhs = self.parse_(&env, next_prec)?;
+            let rhs = self.parse_(&mut env, next_prec)?;
             lhs = self.push_insn(opcode, vec![lhs, rhs]);
         }
         Ok(lhs)
@@ -602,7 +691,11 @@ fn main() -> Result<(), ParseError> {
         fun params(a, b) { }
         var x = 1;
         fun read_global() { return x; }
-        fun write_global() { x = 2; }
+        if (1) {
+            x = 2;
+        } else {
+            x = 3;
+        }
         print x;
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
