@@ -230,12 +230,32 @@ struct Function {
     name: String,
     entry: BlockId,
     insns: Vec<Insn>,
+    union_find: Vec<Option<InsnId>>,
     blocks: Vec<Block>,
 }
 
 impl Function {
     fn new(name: String) -> Function {
-        Function { name, entry: BlockId(0), insns: vec![], blocks: vec![Block::new()] }
+        Function { name, entry: BlockId(0), insns: vec![], union_find: vec![], blocks: vec![Block::new()] }
+    }
+
+    fn find(&self, insn: InsnId) -> InsnId {
+        let mut result = insn;
+        loop {
+            let it = if result.0 < self.union_find.len() { self.union_find[result.0] } else { None };
+            match it {
+                Some(insn) => result = insn,
+                None => return result,
+            }
+        }
+    }
+
+    fn make_equal_to(&mut self, left: InsnId, right: InsnId) {
+        let found = self.find(left);
+        if found.0 >= self.union_find.len() {
+            self.union_find.resize(found.0, None);
+        }
+        self.union_find[found.0] = Some(right);
     }
 
     fn new_block(&mut self) -> BlockId {
