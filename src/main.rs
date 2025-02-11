@@ -318,7 +318,7 @@ struct Program {
     funs: Vec<Function>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 enum Assoc {
     Any,
     Left,
