@@ -69,7 +69,14 @@ impl<'a> Lexer<'a> {
                 Some('+') => { return Ok(Token::Plus); }
                 Some('-') => { return Ok(Token::Minus); }
                 Some('*') => { return Ok(Token::Star); }
-                Some('/') => { return Ok(Token::ForwardSlash); }
+                Some('/') => {
+                    if self.chars.peek() == Some(&'/') {
+                        self.chars.next();
+                        self.read_comment();
+                        continue;
+                    }
+                    return Ok(Token::ForwardSlash);
+                }
                 Some('\\') => { return Ok(Token::BackSlash); }
                 Some(',') => { return Ok(Token::Comma); }
                 Some('!') => {
@@ -158,6 +165,16 @@ impl<'a> Lexer<'a> {
             self.chars.next();
         }
         Ok(Token::Int(result))
+    }
+
+    fn read_comment(&mut self) {
+        loop {
+            match self.chars.next() {
+                None => break,
+                Some('\n') => break,
+                _ => continue,
+            }
+        }
     }
 }
 
@@ -734,6 +751,7 @@ fn main() -> Result<(), ParseError> {
     let mut lexer = Lexer::from_str("
         (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
         fun empty() { return nil; }
+        // a comment
         fun inc(a) { return a+1; }
         fun params(a, b) { }
         var x = 1;
