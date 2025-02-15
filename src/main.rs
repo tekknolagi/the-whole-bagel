@@ -426,11 +426,15 @@ impl<'a> Env<'a> {
     }
 }
 
+struct Context {
+    fun: FunId,
+    block: BlockId,
+}
+
 struct Parser<'a> {
     tokens: std::iter::Peekable<&'a mut Lexer<'a>>,
     prog: Program,
-    fun_stack: Vec<FunId>,
-    block: BlockId,
+    context_stack: Vec<Context>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -442,23 +446,34 @@ enum ParseError {
 
 impl Parser<'_> {
     fn from_lexer<'a>(lexer: &'a mut Lexer<'a>) -> Parser<'a> {
-        Parser { tokens: lexer.peekable(), prog: Program::new(), fun_stack: vec![], block: BlockId(0) }
+        Parser { tokens: lexer.peekable(), prog: Program::new(), context_stack: vec![] }
     }
 
-    fn enter_fun(&mut self, fun_id: FunId) {
-        self.fun_stack.push(fun_id);
-        self.block = self.prog.funs[fun_id.0].entry;
+    fn enter_fun(&mut self, fun: FunId) {
+        let block = self.prog.funs[fun.0].entry;
+        self.context_stack.push(Context { fun, block });
+        self.enter_block(block);
     }
 
     fn leave_fun(&mut self) {
-        self.fun_stack.pop().expect("Function stack underflow");
-        if let Some(fun_id) = self.fun_stack.last() {
-            self.block = self.prog.funs[fun_id.0].entry;
-        }
+        self.context_stack.pop().expect("Function stack underflow");
     }
 
     fn fun(&self) -> FunId {
-        *self.fun_stack.last().expect("Function stack underflow")
+        self.context_stack.last().expect("Function stack underflow").fun
+    }
+
+    fn block(&self) -> BlockId {
+        self.context_stack.last().expect("Function stack underflow").block
+    }
+
+    fn new_block(&mut self) -> BlockId {
+        let fun = self.fun();
+        self.prog.funs[fun.0].new_block()
+    }
+
+    fn enter_block(&mut self, block_id: BlockId) {
+        self.context_stack.last_mut().unwrap().block = block_id;
     }
 
     fn expect(&mut self, expected: Token) -> Result<(), ParseError> {
@@ -477,11 +492,6 @@ impl Parser<'_> {
         }
     }
 
-    fn new_block(&mut self) -> BlockId {
-        let fun = self.fun();
-        self.prog.funs[fun.0].new_block()
-    }
-
     fn push_insn(&mut self, opcode: Opcode, operands: Vec<Opnd>) -> Opnd {
         match (&opcode, &operands[..]) {
             (Opcode::Add, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l+r)),
@@ -493,7 +503,7 @@ impl Parser<'_> {
             (Opcode::GreaterEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l>=r)),
             (Opcode::Less, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<r)),
             (Opcode::LessEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<=r)),
-            _ => Opnd::Insn(self.prog.push_insn(self.fun(), self.block, opcode, operands))
+            _ => Opnd::Insn(self.prog.push_insn(self.fun(), self.block(), opcode, operands))
         }
     }
 
@@ -563,24 +573,24 @@ impl Parser<'_> {
                 let iffalse_block = self.new_block();
                 self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![cond]);
 
-                self.block = iftrue_block;
+                self.enter_block(iftrue_block);
                 let mut iftrue_env = env.clone();
                 self.parse_statement(&mut iftrue_env)?;
-                let iftrue_end = self.block;
+                let iftrue_end = self.block();
 
                 if self.tokens.peek() == Some(&Token::Else) {
                     self.tokens.next();
-                    self.block = iffalse_block;
+                    self.enter_block(iffalse_block);
                     let mut iffalse_env = env.clone();
                     self.parse_statement(&mut iffalse_env)?;
                     let join_block = self.new_block();
                     self.push_insn(Opcode::Branch(join_block), vec![]);
 
-                    self.block = join_block;
+                    self.enter_block(join_block);
                     self.merge_envs(&iftrue_env, &iffalse_env);
                     self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(join_block), vec![]);
                 } else {
-                    self.block = iffalse_block;
+                    self.enter_block(iffalse_block);
                     self.merge_envs(&env, &iftrue_env);
                     self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(iffalse_block), vec![]);
                 }
@@ -704,10 +714,10 @@ impl Parser<'_> {
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
                 self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![lhs.clone()]);
-                self.block = iffalse_block;
+                self.enter_block(iffalse_block);
                 let rhs = self.parse_(&mut env, next_prec)?;
                 self.push_insn(Opcode::Branch(iftrue_block), vec![]);
-                self.block = iftrue_block;
+                self.enter_block(iftrue_block);
                 lhs = self.push_insn(Opcode::Phi, vec![lhs, rhs])
             } else {
                 let rhs = self.parse_(&mut env, next_prec)?;
