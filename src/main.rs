@@ -12,7 +12,6 @@ enum Token {
     Int(i64),
     Bool(bool),
     Float(f64),
-    Eof,
     Semicolon,
     Less,
     LessEqual,
@@ -47,6 +46,7 @@ enum Token {
 
 #[derive(Debug, PartialEq)]
 enum LexError {
+    Eof,
     UnexpectedChar(char),
     UnterminatedStringLiteral,
 }
@@ -60,7 +60,7 @@ impl<'a> Lexer<'a> {
     fn next_token(&mut self) -> Result<Token, LexError> {
         loop {
             match self.chars.next() {
-                None => { return Ok(Token::Eof); }
+                None => { return Err(LexError::Eof); }
                 Some(c) if c.is_whitespace() => { continue; }
                 Some(c) if c.is_alphabetic() => { return self.read_ident(c); }
                 Some(c) if c.is_digit(NUMBER_BASE) => { return self.read_int(c.to_digit(NUMBER_BASE).unwrap() as i64); }
@@ -182,6 +182,7 @@ impl<'a> std::iter::Iterator for Lexer<'a> {
     type Item = Token;
     fn next(&mut self) -> Option<Token> {
         match self.next_token() {
+            Err(LexError::Eof) => { None }
             Err(e) => { eprintln!("Lexer error: {e:?}"); None }
             Ok(token) => Some(token),
         }
@@ -772,4 +773,21 @@ fn main() -> Result<(), ParseError> {
     //     if token.is_err() || token == Ok(Token::Eof) { break; }
     // }
     Ok(())
+}
+
+#[cfg(test)]
+mod lexer_tests {
+    use super::{Lexer, Token};
+    use expect_test::{expect, Expect};
+
+    fn check(source: &str, expect: Expect) {
+        let mut lexer = Lexer::from_str(source);
+        let actual: Vec<Token> = lexer.collect();
+        expect.assert_eq(format!("{:?}", actual).as_str());
+    }
+
+    #[test]
+    fn foo() {
+        check("1", expect!["[Int(1)]"])
+    }
 }
