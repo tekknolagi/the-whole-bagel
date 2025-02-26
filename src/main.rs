@@ -191,7 +191,7 @@ impl<'a> std::iter::Iterator for Lexer<'a> {
 
 #[derive(PartialEq, Copy, Clone)]
 struct InsnId(usize);
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, Eq, Hash)]
 struct BlockId(usize);
 #[derive(PartialEq, Copy, Clone)]
 struct FunId(usize);
@@ -281,6 +281,23 @@ impl Function {
         self.blocks.push(Block::new());
         result
     }
+
+    fn is_terminated(&self, block: BlockId) -> bool {
+        match self.blocks[block.0].insns.last().map(|insn| &self.insns[insn.0].opcode) {
+            Some(Opcode::Return | Opcode::CondBranch(..) | Opcode::Branch(..)) => true,
+            _ => false,
+        }
+    }
+
+    fn succs(&self, block: BlockId) -> Vec<BlockId> {
+        match self.blocks[block.0].insns.last().map(|insn| &self.insns[insn.0].opcode) {
+            None => vec![],
+            Some(Opcode::Return) => vec![],
+            Some(Opcode::CondBranch(iftrue, iffalse)) => vec![*iftrue, *iffalse],
+            Some(Opcode::Branch(target)) => vec![*target],
+            insn => panic!("Unexpected terminator {insn:?}"),
+        }
+    }
 }
 
 impl std::fmt::Display for Function {
@@ -309,6 +326,8 @@ enum Value {
 
 #[derive(Debug)]
 enum Opcode {
+    Placeholder,
+    Const(Value),
     Abort,
     Print,
     Return,
@@ -330,25 +349,10 @@ enum Opcode {
     Phi,
 }
 
-#[derive(Clone, PartialEq)]
-enum Opnd {
-    Insn(InsnId),
-    Const(Value),
-}
-
-impl std::fmt::Debug for Opnd {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            Opnd::Insn(insn_id) => write!(f, "{insn_id}"),
-            Opnd::Const(val) => write!(f, "{val:?}"),
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Insn {
     opcode: Opcode,
-    operands: Vec<Opnd>,
+    operands: Vec<InsnId>,
 }
 
 #[derive(Debug)]
@@ -376,7 +380,13 @@ impl Program {
         fun
     }
 
-    fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<Opnd>) -> InsnId {
+    fn new_placeholder(&mut self, fun: FunId) -> InsnId {
+        let result = InsnId(self.funs[fun.0].insns.len());
+        self.funs[fun.0].insns.push(Insn { opcode: Opcode::Placeholder, operands: vec![] });
+        result
+    }
+
+    fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<InsnId>) -> InsnId {
         // TODO(max): Catch double terminators
         let result = InsnId(self.funs[fun.0].insns.len());
         self.funs[fun.0].insns.push(Insn { opcode, operands });
@@ -404,7 +414,7 @@ enum VarKind {
 #[derive(Clone)]
 struct Env<'a> {
     fun: FunId,
-    bindings: HashMap<String, Opnd>,
+    bindings: HashMap<String, InsnId>,
     parent: Option<&'a Env<'a>>,
 }
 
@@ -417,11 +427,11 @@ impl<'a> Env<'a> {
         Env { fun, bindings: HashMap::new(), parent: Some(parent) }
     }
 
-    fn lookup(&self, name: &String) -> Option<(VarKind, Opnd)> {
+    fn lookup(&self, name: &String) -> Option<(VarKind, InsnId)> {
         self.lookup_(VarKind::Local, name)
     }
 
-    fn lookup_(&self, kind: VarKind, name: &String) -> Option<(VarKind, Opnd)> {
+    fn lookup_(&self, kind: VarKind, name: &String) -> Option<(VarKind, InsnId)> {
         match self.bindings.get(name) {
             None if self.parent.is_none() => None,
             None => self.parent.as_ref().unwrap().lookup_(VarKind::Closure, name),
@@ -429,12 +439,12 @@ impl<'a> Env<'a> {
         }
     }
 
-    fn define(&mut self, name: &String, value: Opnd) {
+    fn define(&mut self, name: &String, value: InsnId) {
         assert!(self.bindings.get(name).is_none());
         self.bindings.insert(name.clone(), value);
     }
 
-    fn set(&mut self, name: &String, value: Opnd) -> Option<VarKind> {
+    fn set(&mut self, name: &String, value: InsnId) -> Option<VarKind> {
         use std::collections::hash_map::Entry;
         match (self.bindings.entry(name.clone()), &mut self.parent) {
             (Entry::Vacant(entry), None) => None,
@@ -447,6 +457,8 @@ impl<'a> Env<'a> {
 struct Context {
     fun: FunId,
     block: BlockId,
+    entry_state: Vec<HashMap<String, InsnId>>,
+    exit_state: Vec<HashMap<String, InsnId>>,
 }
 
 struct Parser<'a> {
@@ -469,12 +481,59 @@ impl Parser<'_> {
 
     fn enter_fun(&mut self, fun: FunId) {
         let block = self.prog.funs[fun.0].entry;
-        self.context_stack.push(Context { fun, block });
+        self.context_stack.push(Context { fun, block, entry_state: vec![HashMap::new()], exit_state: vec![HashMap::new()] });
         self.enter_block(block);
     }
 
+    fn value_of(&mut self, name: String) -> InsnId {
+        let fun = self.fun();
+        let block = self.block();
+        eprintln!("state: {:?}", self.context_stack.last_mut().unwrap().exit_state[block.0]);
+        let insn = self.context_stack.last_mut().unwrap().exit_state[block.0].entry(name).or_insert_with(|| self.prog.new_placeholder(fun));
+        insn.clone()
+    }
+
+    fn define(&mut self, name: String, value: InsnId) -> InsnId {
+        let fun = self.fun();
+        let block = self.block();
+        eprintln!("state before define: {:?}", self.context_stack.last_mut().unwrap().exit_state[block.0]);
+        self.context_stack.last_mut().unwrap().exit_state[block.0].insert(name, value.clone());
+        eprintln!("state after define: {:?}", self.context_stack.last_mut().unwrap().exit_state[block.0]);
+        value
+    }
+
     fn leave_fun(&mut self) {
-        self.context_stack.pop().expect("Function stack underflow");
+        if let Some(Context { fun, block, entry_state, exit_state }) = self.context_stack.pop() {
+            // If the exit block doesn't explicitly return, implicitly return nil
+            if !self.prog.funs[fun.0].is_terminated(block) {
+                let nil = self.prog.push_insn(fun, block, Opcode::Const(Value::Nil), vec![]);
+                self.prog.push_insn(fun, block, Opcode::Return, vec![nil]);
+            }
+            // Find predecessors
+            let num_blocks = self.prog.funs[fun.0].blocks.len();
+            let mut preds = Vec::with_capacity(num_blocks);
+            preds.resize(num_blocks, HashSet::new());
+            for (block_idx, block) in self.prog.funs[fun.0].blocks.iter().enumerate() {
+                preds[block_idx].extend(self.prog.funs[fun.0].succs(BlockId(block_idx)));
+            }
+            // Link entry and exit states
+            for block_idx in 0..num_blocks {
+                for (name, value) in entry_state[block_idx].iter() {
+                    let mut values = vec![];
+                    for pred in preds[block_idx].iter() {
+                        values.push(exit_state[pred.0][name]);
+                    }
+                    if values.len() == 1 {
+                        self.prog.funs[fun.0].make_equal_to(*value, values[0]);
+                    } else {
+                        todo!()
+                    }
+                }
+            }
+            // Simplify phis
+        } else {
+            panic!("Function stack underflow");
+        }
     }
 
     fn fun(&self) -> FunId {
@@ -487,6 +546,8 @@ impl Parser<'_> {
 
     fn new_block(&mut self) -> BlockId {
         let fun = self.fun();
+        self.context_stack.last_mut().unwrap().entry_state.push(HashMap::new());
+        self.context_stack.last_mut().unwrap().exit_state.push(HashMap::new());
         self.prog.funs[fun.0].new_block()
     }
 
@@ -510,19 +571,8 @@ impl Parser<'_> {
         }
     }
 
-    fn push_insn(&mut self, opcode: Opcode, operands: Vec<Opnd>) -> Opnd {
-        match (&opcode, &operands[..]) {
-            (Opcode::Add, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l+r)),
-            (Opcode::Mul, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Int(l*r)),
-            (Opcode::Div, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) if *r != 0 => Opnd::Const(Value::Int(l/r)),
-            (Opcode::Equal, [Opnd::Const(l), Opnd::Const(r)]) => Opnd::Const(Value::Bool(l==r)),
-            (Opcode::NotEqual, [Opnd::Const(l), Opnd::Const(r)]) => Opnd::Const(Value::Bool(l != r)),
-            (Opcode::Greater, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l>r)),
-            (Opcode::GreaterEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l>=r)),
-            (Opcode::Less, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<r)),
-            (Opcode::LessEqual, [Opnd::Const(Value::Int(l)), Opnd::Const(Value::Int(r))]) => Opnd::Const(Value::Bool(l<=r)),
-            _ => Opnd::Insn(self.prog.push_insn(self.fun(), self.block(), opcode, operands))
-        }
+    fn push_insn(&mut self, opcode: Opcode, operands: Vec<InsnId>) -> InsnId {
+        self.prog.push_insn(self.fun(), self.block(), opcode, operands)
     }
 
     fn parse_program(&mut self) -> Result<(), ParseError> {
@@ -533,26 +583,6 @@ impl Parser<'_> {
         }
         self.leave_fun();
         Ok(())
-    }
-
-    fn merge(&mut self, left: Option<&Opnd>, right: Option<&Opnd>) {
-        match (left, right) {
-            (Some(left), Some(right)) if left == right => {}
-            (Some(left), Some(right)) => { self.push_insn(Opcode::Phi, vec![left.clone(), right.clone()]); }
-            (Some(value), None) | (None, Some(value)) => { self.push_insn(Opcode::Phi, vec![value.clone(), Opnd::Const(Value::Nil)]); }
-            (None, None) => panic!("Cannot happen"),
-        }
-    }
-
-    fn merge_envs(&mut self, left: &Env, right: &Env) {
-        let mut all_keys: HashSet<&String> = HashSet::new();
-        all_keys.extend(&mut left.bindings.keys());
-        all_keys.extend(&mut right.bindings.keys());
-        for key in all_keys {
-            let left_value = left.bindings.get(key);
-            let right_value = right.bindings.get(key);
-            self.merge(left_value, right_value);
-        }
     }
 
     fn parse_statement(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
@@ -578,6 +608,7 @@ impl Parser<'_> {
                 let name = self.expect_ident()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression(&mut env)?;
+                self.define(name.clone(), value);
                 env.define(&name, value);
                 Ok(())
             }
@@ -595,20 +626,17 @@ impl Parser<'_> {
                 self.parse_statement(&mut iftrue_env)?;
                 let iftrue_end = self.block();
 
+                self.enter_block(iffalse_block);
                 if self.tokens.peek() == Some(&Token::Else) {
                     self.tokens.next();
-                    self.enter_block(iffalse_block);
                     let mut iffalse_env = env.clone();
                     self.parse_statement(&mut iffalse_env)?;
                     let join_block = self.new_block();
                     self.push_insn(Opcode::Branch(join_block), vec![]);
 
                     self.enter_block(join_block);
-                    self.merge_envs(&iftrue_env, &iffalse_env);
                     self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(join_block), vec![]);
                 } else {
-                    self.enter_block(iffalse_block);
-                    self.merge_envs(&env, &iftrue_env);
                     self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(iffalse_block), vec![]);
                 }
                 return Ok(());  // no semicolon
@@ -663,17 +691,32 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn parse_expression(&mut self, mut env: &mut Env) -> Result<Opnd, ParseError> {
+    fn parse_expression(&mut self, mut env: &mut Env) -> Result<InsnId, ParseError> {
         self.parse_(env, 0)
     }
 
-    fn parse_(&mut self, mut env: &mut Env, prec: u32) -> Result<Opnd, ParseError> {
+    fn parse_(&mut self, mut env: &mut Env, prec: u32) -> Result<InsnId, ParseError> {
         let mut lhs = match self.tokens.peek() {
             None => Err(ParseError::UnexpectedError),
-            Some(Token::Nil) => { let result = Opnd::Const(Value::Nil); self.tokens.next(); Ok(result) }
-            Some(Token::Bool(value)) => { let result = Opnd::Const(Value::Bool(*value)); self.tokens.next(); Ok(result) }
-            Some(Token::Int(value)) => { let result = Opnd::Const(Value::Int(*value)); self.tokens.next(); Ok(result) }
-            Some(Token::Str(value)) => { let result = Opnd::Const(Value::Str(value.clone())); self.tokens.next(); Ok(result) }
+            Some(Token::Nil) => {
+                self.tokens.next();
+                Ok(self.push_insn(Opcode::Const(Value::Nil), vec![]))
+            }
+            Some(Token::Bool(value)) => {
+                let value = value.clone();
+                self.tokens.next();
+                Ok(self.push_insn(Opcode::Const(Value::Bool(value)), vec![]))
+            }
+            Some(Token::Int(value)) => {
+                let value = value.clone();
+                self.tokens.next();
+                Ok(self.push_insn(Opcode::Const(Value::Int(value)), vec![]))
+            }
+            Some(Token::Str(value)) => {
+                let value = value.clone();
+                self.tokens.next();
+                Ok(self.push_insn(Opcode::Const(Value::Str(value)), vec![]))
+            }
             Some(Token::Ident(name)) => {
                 let name = name.clone();
                 self.tokens.next();
@@ -683,16 +726,16 @@ impl Parser<'_> {
                     // TODO(max): Operator precedence ...?
                     let value = self.parse_expression(&mut env)?;
                     match env.set(&name, value.clone()) {
-                        Some(VarKind::Local) => Ok(value),
+                        Some(VarKind::Local) => Ok(self.define(name, value)),
                         // TODO(max): Figure out a local numbering scheme I guess
-                        Some(VarKind::Closure) => Ok(self.push_insn(Opcode::ClosureSet(0), vec![value])),
+                        Some(VarKind::Closure) => todo!("closure set"),
                         None => Err(ParseError::UnboundName(name)),
                     }
                 } else {
                     match env.lookup(&name) {
-                        Some((VarKind::Local, value)) => Ok(value),
+                        Some((VarKind::Local, value)) => Ok(self.value_of(name)),
                         // TODO(max): Figure out a local numbering scheme I guess
-                        Some((VarKind::Closure, value)) => Ok(self.push_insn(Opcode::ClosureRef(0), vec![])),
+                        Some((VarKind::Closure, value)) => todo!("closure get"),
                         None => Err(ParseError::UnboundName(name)),
                     }
                 }
@@ -749,19 +792,26 @@ fn main() -> Result<(), ParseError> {
     // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
     //     var average = (min + max) / 2;");
     let mut lexer = Lexer::from_str("
-        (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
-        fun empty() { return nil; }
-        // a comment
-        fun inc(a) { return a+1; }
-        fun params(a, b) { }
-        var x = 1;
-        fun read_global() { return x; }
-        if (1) {
-            x = 2;
-        } else {
-            x = 3;
-        }
-        print x;
+        var a = 1;
+        // if (1) {
+        //     a = 2;
+        // } else {
+        //     a = 3;
+        // }
+        print a;
+        // // (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
+        // fun empty() { return nil; }
+        // // a comment
+        // fun inc(a) { return a+1; }
+        // // fun params(a, b) { }
+        // var x = 1;
+        // fun read_global() { return x; }
+        // if (1) {
+        //     x = 2;
+        // } else {
+        //     x = 3;
+        // }
+        // print x;
     ");
     let mut parser = Parser::from_lexer(&mut lexer);
     parser.parse_program()?;
@@ -899,6 +949,44 @@ mod parser_tests {
                 v3 = Insn { opcode: Print, operands: [v2] }
                 v4 = Insn { opcode: Const(Nil), operands: [] }
                 v5 = Insn { opcode: Return, operands: [v4] }
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_var() {
+        check("
+var a = 1;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Insn { opcode: Const(Int(1)), operands: [] }
+                v1 = Insn { opcode: Print, operands: [v0] }
+                v2 = Insn { opcode: Const(Nil), operands: [] }
+                v3 = Insn { opcode: Return, operands: [v2] }
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_var_assign() {
+        check("
+var a = 1;
+a = 2;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Insn { opcode: Const(Int(1)), operands: [] }
+                v1 = Insn { opcode: Const(Int(2)), operands: [] }
+                v2 = Insn { opcode: Print, operands: [v1] }
+                v3 = Insn { opcode: Const(Nil), operands: [] }
+                v4 = Insn { opcode: Return, operands: [v3] }
               }
             }
         "#]])
