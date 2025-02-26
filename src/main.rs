@@ -922,6 +922,42 @@ mod parser_tests {
     }
 
     #[test]
+    fn mul_add() {
+        check("1*2+3;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Insn { opcode: Const(Int(1)), operands: [] }
+                v1 = Insn { opcode: Const(Int(2)), operands: [] }
+                v2 = Insn { opcode: Mul, operands: [v0, v1] }
+                v3 = Insn { opcode: Const(Int(3)), operands: [] }
+                v4 = Insn { opcode: Add, operands: [v2, v3] }
+                v5 = Insn { opcode: Const(Nil), operands: [] }
+                v6 = Insn { opcode: Return, operands: [v5] }
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn add_mul() {
+        check("1+2*3;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Insn { opcode: Const(Int(1)), operands: [] }
+                v1 = Insn { opcode: Const(Int(2)), operands: [] }
+                v2 = Insn { opcode: Const(Int(3)), operands: [] }
+                v3 = Insn { opcode: Mul, operands: [v1, v2] }
+                v4 = Insn { opcode: Add, operands: [v0, v3] }
+                v5 = Insn { opcode: Const(Nil), operands: [] }
+                v6 = Insn { opcode: Return, operands: [v5] }
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_toplevel_add_expression_statement() {
         check("1+2;", expect![[r#"
             Entry: fn0
