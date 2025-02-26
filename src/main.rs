@@ -529,7 +529,6 @@ impl Parser<'_> {
         self.enter_fun(self.prog.entry);
         let mut env = Env::new(self.prog.entry);
         while let Some(token) = self.tokens.peek() {
-            if *token == Token::Eof { break; }
             self.parse_statement(&mut env)?;
         }
         self.leave_fun();
@@ -842,5 +841,66 @@ mod lexer_tests {
     #[test]
     fn test_unterminated_string_lit() {
         check_error("\"abc", expect!["UnterminatedStringLiteral"])
+    }
+}
+
+#[cfg(test)]
+mod parser_tests {
+    use super::{Lexer, Parser};
+    use expect_test::{expect, Expect};
+
+    fn check(source: &str, expect: Expect) {
+        let mut lexer = Lexer::from_str(source);
+        let mut parser = Parser::from_lexer(&mut lexer);
+        parser.parse_program().unwrap();
+        let actual = parser.prog;
+        expect.assert_eq(format!("{actual}").as_str());
+    }
+
+    #[test]
+    fn test_toplevel_int_expression_statement() {
+        check("1;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Insn { opcode: Const(Int(1)), operands: [] }
+                v1 = Insn { opcode: Const(Nil), operands: [] }
+                v2 = Insn { opcode: Return, operands: [v1] }
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_toplevel_add_expression_statement() {
+        check("1+2;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Insn { opcode: Const(Int(1)), operands: [] }
+                v1 = Insn { opcode: Const(Int(2)), operands: [] }
+                v2 = Insn { opcode: Add, operands: [v0, v1] }
+                v3 = Insn { opcode: Const(Nil), operands: [] }
+                v4 = Insn { opcode: Return, operands: [v3] }
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_print() {
+        check("print 1+2;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Insn { opcode: Const(Int(1)), operands: [] }
+                v1 = Insn { opcode: Const(Int(2)), operands: [] }
+                v2 = Insn { opcode: Add, operands: [v0, v1] }
+                v3 = Insn { opcode: Print, operands: [v2] }
+                v4 = Insn { opcode: Const(Nil), operands: [] }
+                v5 = Insn { opcode: Return, operands: [v4] }
+              }
+            }
+        "#]])
     }
 }
