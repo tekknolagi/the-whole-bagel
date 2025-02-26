@@ -783,11 +783,64 @@ mod lexer_tests {
     fn check(source: &str, expect: Expect) {
         let mut lexer = Lexer::from_str(source);
         let actual: Vec<Token> = lexer.collect();
-        expect.assert_eq(format!("{:?}", actual).as_str());
+        expect.assert_eq(format!("{actual:?}").as_str());
+    }
+
+    fn check_error(source: &str, expect: Expect) {
+        let mut lexer = Lexer::from_str(source);
+        loop {
+            match lexer.next_token() {
+                Err(actual) => {
+                    expect.assert_eq(format!("{actual:?}").as_str());
+                    break;
+                }
+                Ok(_) => continue,
+            }
+        }
     }
 
     #[test]
-    fn foo() {
+    fn test_digit() {
         check("1", expect!["[Int(1)]"])
+    }
+
+    #[test]
+    fn test_digits() {
+        check("123", expect!["[Int(123)]"])
+    }
+
+    #[test]
+    fn test_int_add() {
+        check("1+2", expect!["[Int(1), Plus, Int(2)]"])
+    }
+
+    #[test]
+    fn test_int_mul() {
+        check("1*2", expect!["[Int(1), Star, Int(2)]"])
+    }
+
+    #[test]
+    fn test_int_sub() {
+        check("1-2", expect!["[Int(1), Minus, Int(2)]"])
+    }
+
+    #[test]
+    fn test_int_div() {
+        check("1/2", expect!["[Int(1), ForwardSlash, Int(2)]"])
+    }
+
+    #[test]
+    fn test_var() {
+        check("var a = 1;", expect![[r#"[Var, Ident("a"), Equal, Int(1), Semicolon]"#]])
+    }
+
+    #[test]
+    fn test_string_lit() {
+        check(r#""abc""#, expect![[r#"[Str("abc")]"#]])
+    }
+
+    #[test]
+    fn test_unterminated_string_lit() {
+        check_error("\"abc", expect!["UnterminatedStringLiteral"])
     }
 }
