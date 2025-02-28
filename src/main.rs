@@ -307,7 +307,14 @@ impl std::fmt::Display for Function {
             let block_id = BlockId(idx);
             writeln!(f, "  {block_id} {{")?;
             for insn_id in &self.blocks[block_id.0].insns {
-                writeln!(f, "    {insn_id} = {:?}", self.insns[insn_id.0])?;
+                let Insn { opcode, operands } = &self.insns[insn_id.0];
+                write!(f, "    {insn_id} = {:?}", opcode)?;
+                let mut sep = "";
+                for operand in operands {
+                    write!(f, "{sep} {:?}", self.find(*operand));
+                    sep = ",";
+                }
+                write!(f, "\n");
             }
             writeln!(f, "  }}")?;
         }
@@ -488,7 +495,6 @@ impl Parser<'_> {
     fn value_of(&mut self, name: String) -> InsnId {
         let fun = self.fun();
         let block = self.block();
-        eprintln!("state: {:?}", self.context_stack.last_mut().unwrap().exit_state[block.0]);
         let insn = self.context_stack.last_mut().unwrap().exit_state[block.0].entry(name).or_insert_with(|| self.prog.new_placeholder(fun));
         insn.clone()
     }
@@ -496,9 +502,7 @@ impl Parser<'_> {
     fn define(&mut self, name: String, value: InsnId) -> InsnId {
         let fun = self.fun();
         let block = self.block();
-        eprintln!("state before define: {:?}", self.context_stack.last_mut().unwrap().exit_state[block.0]);
         self.context_stack.last_mut().unwrap().exit_state[block.0].insert(name, value.clone());
-        eprintln!("state after define: {:?}", self.context_stack.last_mut().unwrap().exit_state[block.0]);
         value
     }
 
@@ -669,7 +673,9 @@ impl Parser<'_> {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
                     let name = name.clone();
-                    func_env.define(&name, self.push_insn(Opcode::Param(idx), vec![]));
+                    let param = self.push_insn(Opcode::Param(idx), vec![]);
+                    func_env.define(&name, param);
+                    self.define(name, param);
                     self.tokens.next();
                     idx += 1;
                 }
@@ -800,10 +806,6 @@ fn main() -> Result<(), ParseError> {
         // }
         print a;
         // // (1+2)*3; 4/5; 6 == 7; print 1+8 <= 9; print nil;
-        // fun empty() { return nil; }
-        // // a comment
-        // fun inc(a) { return a+1; }
-        // // fun params(a, b) { }
         // var x = 1;
         // fun read_global() { return x; }
         // if (1) {
@@ -884,6 +886,14 @@ mod lexer_tests {
     }
 
     #[test]
+    fn test_comment() {
+        check("var a =
+               // a comment
+               1;",
+               expect![[r#"[Var, Ident("a"), Equal, Int(1), Semicolon]"#]])
+    }
+
+    #[test]
     fn test_string_lit() {
         check(r#""abc""#, expect![[r#"[Str("abc")]"#]])
     }
@@ -913,9 +923,9 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Insn { opcode: Const(Int(1)), operands: [] }
-                v1 = Insn { opcode: Const(Nil), operands: [] }
-                v2 = Insn { opcode: Return, operands: [v1] }
+                v0 = Const(Int(1))
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
         "#]])
@@ -927,13 +937,13 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Insn { opcode: Const(Int(1)), operands: [] }
-                v1 = Insn { opcode: Const(Int(2)), operands: [] }
-                v2 = Insn { opcode: Mul, operands: [v0, v1] }
-                v3 = Insn { opcode: Const(Int(3)), operands: [] }
-                v4 = Insn { opcode: Add, operands: [v2, v3] }
-                v5 = Insn { opcode: Const(Nil), operands: [] }
-                v6 = Insn { opcode: Return, operands: [v5] }
+                v0 = Const(Int(1))
+                v1 = Const(Int(2))
+                v2 = Mul v0, v1
+                v3 = Const(Int(3))
+                v4 = Add v2, v3
+                v5 = Const(Nil)
+                v6 = Return v5
               }
             }
         "#]])
@@ -945,13 +955,13 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Insn { opcode: Const(Int(1)), operands: [] }
-                v1 = Insn { opcode: Const(Int(2)), operands: [] }
-                v2 = Insn { opcode: Const(Int(3)), operands: [] }
-                v3 = Insn { opcode: Mul, operands: [v1, v2] }
-                v4 = Insn { opcode: Add, operands: [v0, v3] }
-                v5 = Insn { opcode: Const(Nil), operands: [] }
-                v6 = Insn { opcode: Return, operands: [v5] }
+                v0 = Const(Int(1))
+                v1 = Const(Int(2))
+                v2 = Const(Int(3))
+                v3 = Mul v1, v2
+                v4 = Add v0, v3
+                v5 = Const(Nil)
+                v6 = Return v5
               }
             }
         "#]])
@@ -963,14 +973,32 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Insn { opcode: Const(Int(1)), operands: [] }
-                v1 = Insn { opcode: Const(Int(2)), operands: [] }
-                v2 = Insn { opcode: Add, operands: [v0, v1] }
-                v3 = Insn { opcode: Const(Nil), operands: [] }
-                v4 = Insn { opcode: Return, operands: [v3] }
+                v0 = Const(Int(1))
+                v1 = Const(Int(2))
+                v2 = Add v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
         "#]])
+    }
+
+    #[test]
+    fn comment() {
+        check("1 +
+// a comment
+2;", expect![[r#"
+    Entry: fn0
+    fn0: fun <toplevel> (entry bb0) {
+      bb0 {
+        v0 = Const(Int(1))
+        v1 = Const(Int(2))
+        v2 = Add v0, v1
+        v3 = Const(Nil)
+        v4 = Return v3
+      }
+    }
+"#]])
     }
 
     #[test]
@@ -979,12 +1007,12 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Insn { opcode: Const(Int(1)), operands: [] }
-                v1 = Insn { opcode: Const(Int(2)), operands: [] }
-                v2 = Insn { opcode: Add, operands: [v0, v1] }
-                v3 = Insn { opcode: Print, operands: [v2] }
-                v4 = Insn { opcode: Const(Nil), operands: [] }
-                v5 = Insn { opcode: Return, operands: [v4] }
+                v0 = Const(Int(1))
+                v1 = Const(Int(2))
+                v2 = Add v0, v1
+                v3 = Print v2
+                v4 = Const(Nil)
+                v5 = Return v4
               }
             }
         "#]])
@@ -999,10 +1027,10 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Insn { opcode: Const(Int(1)), operands: [] }
-                v1 = Insn { opcode: Print, operands: [v0] }
-                v2 = Insn { opcode: Const(Nil), operands: [] }
-                v3 = Insn { opcode: Return, operands: [v2] }
+                v0 = Const(Int(1))
+                v1 = Print v0
+                v2 = Const(Nil)
+                v3 = Return v2
               }
             }
         "#]])
@@ -1018,11 +1046,146 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Insn { opcode: Const(Int(1)), operands: [] }
-                v1 = Insn { opcode: Const(Int(2)), operands: [] }
-                v2 = Insn { opcode: Print, operands: [v1] }
-                v3 = Insn { opcode: Const(Nil), operands: [] }
-                v4 = Insn { opcode: Return, operands: [v3] }
+                v0 = Const(Int(1))
+                v1 = Const(Int(2))
+                v2 = Print v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_if() {
+        check("
+var a = 1;
+if (2) {
+    a = 3;
+} else {
+    a = 4;
+}
+print a;
+",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Const(Int(1))
+                v1 = Const(Int(2))
+                v2 = CondBranch(bb1, bb2) v1
+              }
+              bb1 {
+                v3 = Const(Int(3))
+                v6 = Branch(bb3)
+              }
+              bb2 {
+                v4 = Const(Int(4))
+                v5 = Branch(bb3)
+              }
+              bb3 {
+                v8 = Print v7
+                v9 = Const(Nil)
+                v10 = Return v9
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_empty_fun() {
+        check("fun empty() {}", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Const(Nil)
+                v1 = Return v0
+              }
+            }
+            fn1: fun empty (entry bb0) {
+              bb0 {
+                v0 = Const(Nil)
+                v1 = Return v0
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_fun_return_nil() {
+        check("fun empty() { return nil; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Const(Nil)
+                v1 = Return v0
+              }
+            }
+            fn1: fun empty (entry bb0) {
+              bb0 {
+                v0 = Const(Nil)
+                v1 = Return v0
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_fun_return_param() {
+        check("fun f(a) { return a; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Const(Nil)
+                v1 = Return v0
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = Param(0)
+                v1 = Return v0
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_fun_inc() {
+        check("fun inc(a) { return a+1; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Const(Nil)
+                v1 = Return v0
+              }
+            }
+            fn1: fun inc (entry bb0) {
+              bb0 {
+                v0 = Param(0)
+                v1 = Const(Int(1))
+                v2 = Add v0, v1
+                v3 = Return v2
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_fun_params() {
+        check("fun f(a, b) { return a+b; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = Const(Nil)
+                v1 = Return v0
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = Param(0)
+                v1 = Param(1)
+                v2 = Add v0, v1
+                v3 = Return v2
               }
             }
         "#]])
