@@ -64,6 +64,8 @@ interpreters written in RPython also get JITs "for free". However, the RPython
 JIT only works on traces; this proposed project would compile entire methods at
 a time.
 
+... static basic block versioning
+
 ## More annotations
 
 Let us continue to follow in RPython's footsteps. RPython provides all manner
