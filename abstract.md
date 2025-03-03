@@ -92,3 +92,8 @@ could also allow guest VM AOT.
 * Can we make the compiler small enough that including it pays off?
 * Can we get good enough profiling information to make good inlining decisions,
   guards, specialization, etc without using a tracing approach?
+  * The interpreter written in Lox will be slower than a corresponding
+    interpreter written in C/C++/Rust that makes good use of the language. How
+    well can we JIT interpreters though?
+* Is this new IR the right IR? It's going to need to span a mix of high and low
+  level. Perhaps something like MLIR is a good fit?
