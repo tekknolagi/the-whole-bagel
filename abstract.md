@@ -5,6 +5,8 @@ classes, inheritance, dynamic dispatch, and garbage collection. Most
 implementations are bytecode compilers and interpreters because that's the path
 the book recommends. Let's make an ahead-of-time compiler instead.
 
+[lox]: https://craftinginterpreters.com/the-lox-language.html
+
 Write an ahead-of-time compiler in a language like Rust. Separate the frontend
 from the rest of the compiler (optimizer and backend). Bundle that backend with
 the compiled user code. At run-time, re-compile hot functions using profile
@@ -34,10 +36,12 @@ make for attractive APIs.
 
 ## Weval
 
-Consider another alternative: Weval/Rufus, [hopefully] accepted at PLDI 2025,
-presents a relatively generic algorithm for partially evaluating bytecode
-interpreters (in some SSA IR) with their bytecode programs (some read-only
-memory) into compiled artifacts in the same SSA IR:
+Consider another alternative: [Weval][weval] presents a relatively generic
+algorithm for partially evaluating bytecode interpreters (in some SSA IR) with
+their bytecode programs (some read-only memory) into compiled artifacts in the
+same SSA IR:
+
+[weval]: https://bernsteinbear.com/blog/weval/
 
 ```
 weval : interpreter_cfg -> bytecode -> compiled_bytecode_cfg
