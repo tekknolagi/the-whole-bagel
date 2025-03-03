@@ -76,3 +76,19 @@ As another example, it is possible to annotate RPython (Lox) functions that are
 not interpreters. Such annotations include "monomorphize this function on the
 type of the second parameter" and "this function is pure and results can be
 cached".
+
+Sealed classes
+
+Indicate that code loading is done / sealing / closed world assumption; this
+could also allow guest VM AOT.
+
+## Interop between multiple guest JITs
+
+* Some guest interpreter
+* Regex engine
+
+## Questions and concerns
+
+* Can we make the compiler small enough that including it pays off?
+* Can we get good enough profiling information to make good inlining decisions,
+  guards, specialization, etc without using a tracing approach?
