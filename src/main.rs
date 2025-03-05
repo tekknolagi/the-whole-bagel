@@ -311,10 +311,10 @@ impl std::fmt::Display for Function {
                 write!(f, "    {insn_id} = {:?}", opcode)?;
                 let mut sep = "";
                 for operand in operands {
-                    write!(f, "{sep} {:?}", self.find(*operand));
+                    write!(f, "{sep} {:?}", self.find(*operand))?;
                     sep = ",";
                 }
-                write!(f, "\n");
+                write!(f, "\n")?;
             }
             writeln!(f, "  }}")?;
         }
