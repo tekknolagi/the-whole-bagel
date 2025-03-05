@@ -441,7 +441,14 @@ impl<'a> Env<'a> {
     fn lookup_(&self, kind: VarKind, name: &String) -> Option<(VarKind, InsnId)> {
         match self.bindings.get(name) {
             None if self.parent.is_none() => None,
-            None => self.parent.as_ref().unwrap().lookup_(VarKind::Closure, name),
+            None => {
+                let parent = self.parent.as_ref().unwrap();
+                if parent.fun == self.fun {
+                    parent.lookup_(VarKind::Local, name)
+                } else {
+                    parent.lookup_(VarKind::Closure, name)
+                }
+            }
             Some(value) => Some((kind, value.clone())),
         }
     }
@@ -455,8 +462,11 @@ impl<'a> Env<'a> {
         use std::collections::hash_map::Entry;
         match (self.bindings.entry(name.clone()), &mut self.parent) {
             (Entry::Vacant(entry), None) => None,
+            (Entry::Vacant(entry), Some(parent)) if self.fun == parent.fun =>
+                { entry.insert(value); Some(VarKind::Local) }
+            (Entry::Occupied(mut entry), _) =>
+                { entry.insert(value); Some(VarKind::Local) }
             (Entry::Vacant(entry), Some(_)) => Some(VarKind::Closure),
-            (Entry::Occupied(mut entry), _) => { entry.insert(value); Some(VarKind::Local) }
         }
     }
 }
@@ -647,10 +657,11 @@ impl Parser<'_> {
             }
             Some(Token::LCurly) => {
                 // New scope
+                let mut block_env = Env::from_parent(self.fun(), env);
                 self.tokens.next();
                 while let Some(token) = self.tokens.peek() {
                     if *token == Token::RCurly { break; }
-                    self.parse_statement(&mut env)?;
+                    self.parse_statement(&mut block_env)?;
                 }
                 return self.expect(Token::RCurly);  // no semicolon
             }
