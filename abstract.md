@@ -1,7 +1,7 @@
 # A sketch of a new VM
 
 Pick a random Java-like programming language. [Lox][lox], for example. It has
-classes, inheritance, dynamic dispatch, and garbage collection. Most
+dynamic types, classes, inheritance, dynamic dispatch, and garbage collection. Most
 implementations are bytecode compilers and interpreters because that's the path
 the book recommends. Let's make an ahead-of-time compiler instead.
 
