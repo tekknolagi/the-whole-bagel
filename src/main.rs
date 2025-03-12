@@ -379,6 +379,7 @@ enum Opcode {
     PushFrame,
     ReadLocal(Offset),
     WriteLocal(Offset),
+    GuardInt,
 }
 
 #[derive(Debug)]
@@ -761,7 +762,11 @@ impl Parser<'_> {
                 self.enter_block(iftrue_block);
                 lhs = self.push_insn(Opcode::Phi, vec![lhs, rhs])
             } else {
-                let rhs = self.parse_(&mut env, next_prec)?;
+                let mut rhs = self.parse_(&mut env, next_prec)?;
+                if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
+                    lhs = self.push_insn(Opcode::GuardInt, vec![lhs]);
+                    rhs = self.push_insn(Opcode::GuardInt, vec![rhs]);
+                }
                 lhs = self.push_insn(opcode, vec![lhs, rhs]);
             }
         }
@@ -916,11 +921,15 @@ mod parser_tests {
                 v0 = PushFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
-                v3 = Mul v1, v2
-                v4 = Const(Int(3))
-                v5 = Add v3, v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v3 = GuardInt v1
+                v4 = GuardInt v2
+                v5 = Mul v3, v4
+                v6 = Const(Int(3))
+                v7 = GuardInt v5
+                v8 = GuardInt v6
+                v9 = Add v7, v8
+                v10 = Const(Nil)
+                v11 = Return v10
               }
             }
         "#]])
@@ -936,10 +945,14 @@ mod parser_tests {
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
                 v3 = Const(Int(3))
-                v4 = Mul v2, v3
-                v5 = Add v1, v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v4 = GuardInt v2
+                v5 = GuardInt v3
+                v6 = Mul v4, v5
+                v7 = GuardInt v1
+                v8 = GuardInt v6
+                v9 = Add v7, v8
+                v10 = Const(Nil)
+                v11 = Return v10
               }
             }
         "#]])
@@ -954,9 +967,11 @@ mod parser_tests {
                 v0 = PushFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
-                v3 = Add v1, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v3 = GuardInt v1
+                v4 = GuardInt v2
+                v5 = Add v3, v4
+                v6 = Const(Nil)
+                v7 = Return v6
               }
             }
         "#]])
@@ -973,9 +988,11 @@ mod parser_tests {
         v0 = PushFrame
         v1 = Const(Int(1))
         v2 = Const(Int(2))
-        v3 = Add v1, v2
-        v4 = Const(Nil)
-        v5 = Return v4
+        v3 = GuardInt v1
+        v4 = GuardInt v2
+        v5 = Add v3, v4
+        v6 = Const(Nil)
+        v7 = Return v6
       }
     }
 "#]])
@@ -990,10 +1007,12 @@ mod parser_tests {
                 v0 = PushFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
-                v3 = Add v1, v2
-                v4 = Print v3
-                v5 = Const(Nil)
-                v6 = Return v5
+                v3 = GuardInt v1
+                v4 = GuardInt v2
+                v5 = Add v3, v4
+                v6 = Print v5
+                v7 = Const(Nil)
+                v8 = Return v7
               }
             }
         "#]])
@@ -1219,8 +1238,10 @@ print a;
                 v2 = WriteLocal(Offset(0)) v1
                 v3 = ReadLocal(Offset(0))
                 v4 = Const(Int(1))
-                v5 = Add v3, v4
-                v6 = Return v5
+                v5 = GuardInt v3
+                v6 = GuardInt v4
+                v7 = Add v5, v6
+                v8 = Return v7
               }
             }
         "#]])
@@ -1246,8 +1267,10 @@ print a;
                 v4 = WriteLocal(Offset(1)) v3
                 v5 = ReadLocal(Offset(0))
                 v6 = ReadLocal(Offset(1))
-                v7 = Add v5, v6
-                v8 = Return v7
+                v7 = GuardInt v5
+                v8 = GuardInt v6
+                v9 = Add v7, v8
+                v10 = Return v9
               }
             }
         "#]])
