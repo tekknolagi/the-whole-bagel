@@ -730,19 +730,19 @@ impl Parser<'_> {
             Some(token) => Err(ParseError::UnexpectedToken(token.clone())),
         }?;
         while let Some(token) = self.tokens.peek() {
-            let (assoc, op_prec, opcode) = match token {
-                Token::And => (Assoc::Left, 0, Opcode::Abort),  // not really Abort; just used for precedence
-                Token::Or => (Assoc::Left, 0, Opcode::Abort),  // not really Abort; just used for precedence
-                Token::EqualEqual => (Assoc::Left, 1, Opcode::Equal),
-                Token::BangEqual => (Assoc::Left, 1, Opcode::NotEqual),
-                Token::Greater => (Assoc::Left, 2, Opcode::Greater),
-                Token::GreaterEqual => (Assoc::Left, 2, Opcode::GreaterEqual),
-                Token::Less => (Assoc::Left, 2, Opcode::Less),
-                Token::LessEqual => (Assoc::Left, 2, Opcode::LessEqual),
-                Token::Plus => (Assoc::Any, 3, Opcode::Add),
-                Token::Minus => (Assoc::Left, 3, Opcode::Sub),
-                Token::Star => (Assoc::Any, 4, Opcode::Mul),
-                Token::ForwardSlash => (Assoc::Left, 4, Opcode::Div),
+            let (assoc, op_prec) = match token {
+                Token::And => (Assoc::Left, 0),
+                Token::Or => (Assoc::Left, 0),
+                Token::EqualEqual => (Assoc::Left, 1),
+                Token::BangEqual => (Assoc::Left, 1),
+                Token::Greater => (Assoc::Left, 2),
+                Token::GreaterEqual => (Assoc::Left, 2),
+                Token::Less => (Assoc::Left, 2),
+                Token::LessEqual => (Assoc::Left, 2),
+                Token::Plus => (Assoc::Any, 3),
+                Token::Minus => (Assoc::Left, 3),
+                Token::Star => (Assoc::Any, 4),
+                Token::ForwardSlash => (Assoc::Left, 4),
                 _ => break,
             };
             let token = token.clone();
@@ -761,6 +761,19 @@ impl Parser<'_> {
                 self.enter_block(iftrue_block);
                 lhs = self.push_insn(Opcode::Phi, vec![lhs, rhs])
             } else {
+                let opcode = match token {
+                    Token::EqualEqual => Opcode::Equal,
+                    Token::BangEqual => Opcode::NotEqual,
+                    Token::Greater => Opcode::Greater,
+                    Token::GreaterEqual => Opcode::GreaterEqual,
+                    Token::Less => Opcode::Less,
+                    Token::LessEqual => Opcode::LessEqual,
+                    Token::Plus => Opcode::Add,
+                    Token::Minus => Opcode::Sub,
+                    Token::Star => Opcode::Mul,
+                    Token::ForwardSlash => Opcode::Div,
+                    _ => panic!("Unexpected token {token:?}"),
+                };
                 let mut rhs = self.parse_(&mut env, next_prec)?;
                 if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
                     lhs = self.push_insn(Opcode::GuardInt, vec![lhs]);
