@@ -490,6 +490,10 @@ impl Parser<'_> {
     }
 
     fn leave_fun(&mut self) {
+        if !self.prog.funs[self.fun().0].is_terminated(self.block()) {
+            let nil = self.push_insn(Opcode::Const(Value::Nil), vec![]);
+            self.push_insn(Opcode::Return, vec![nil]);
+        }
         if let Some(Context { fun, block, frame }) = self.context_stack.pop() {
         } else {
             panic!("Function stack underflow");
@@ -879,6 +883,8 @@ mod parser_tests {
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
+                v2 = Const(Nil)
+                v3 = Return v2
               }
             }
         "#]])
@@ -896,6 +902,8 @@ mod parser_tests {
                 v3 = Mul v1, v2
                 v4 = Const(Int(3))
                 v5 = Add v3, v4
+                v6 = Const(Nil)
+                v7 = Return v6
               }
             }
         "#]])
@@ -913,6 +921,8 @@ mod parser_tests {
                 v3 = Const(Int(3))
                 v4 = Mul v2, v3
                 v5 = Add v1, v4
+                v6 = Const(Nil)
+                v7 = Return v6
               }
             }
         "#]])
@@ -928,6 +938,8 @@ mod parser_tests {
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
                 v3 = Add v1, v2
+                v4 = Const(Nil)
+                v5 = Return v4
               }
             }
         "#]])
@@ -945,6 +957,8 @@ mod parser_tests {
         v1 = Const(Int(1))
         v2 = Const(Int(2))
         v3 = Add v1, v2
+        v4 = Const(Nil)
+        v5 = Return v4
       }
     }
 "#]])
@@ -961,6 +975,8 @@ mod parser_tests {
                 v2 = Const(Int(2))
                 v3 = Add v1, v2
                 v4 = Print v3
+                v5 = Const(Nil)
+                v6 = Return v5
               }
             }
         "#]])
@@ -980,6 +996,8 @@ print a;",
                 v2 = WriteLocal(Offset(0)) v1
                 v3 = ReadLocal(Offset(0))
                 v4 = Print v3
+                v5 = Const(Nil)
+                v6 = Return v5
               }
             }
         "#]])
@@ -1002,6 +1020,8 @@ print a;",
                 v4 = WriteLocal(Offset(0)) v3
                 v5 = ReadLocal(Offset(0))
                 v6 = Print v5
+                v7 = Const(Nil)
+                v8 = Return v7
               }
             }
         "#]])
@@ -1028,19 +1048,21 @@ print a;
                 v3 = Const(Int(2))
                 v4 = CondBranch(bb1, bb2) v3
               }
-              bb1 {
-                v5 = Const(Int(3))
-                v6 = WriteLocal(Offset(0)) v5
-                v10 = Branch(bb3)
-              }
               bb2 {
                 v7 = Const(Int(4))
                 v8 = WriteLocal(Offset(0)) v7
                 v9 = Branch(bb3)
               }
+              bb1 {
+                v5 = Const(Int(3))
+                v6 = WriteLocal(Offset(0)) v5
+                v10 = Branch(bb3)
+              }
               bb3 {
                 v11 = ReadLocal(Offset(0))
                 v12 = Print v11
+                v13 = Const(Nil)
+                v14 = Return v13
               }
             }
         "#]])
@@ -1053,11 +1075,15 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
             fn1: fun empty (entry bb0) {
               bb0 {
                 v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
         "#]])
@@ -1083,6 +1109,8 @@ print a;
                 v4 = WriteLocal(Offset(1)) v3
                 v5 = ReadLocal(Offset(0))
                 v6 = Print v5
+                v7 = Const(Nil)
+                v8 = Return v7
               }
             }
         "#]])
@@ -1095,6 +1123,8 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
             fn1: fun empty (entry bb0) {
@@ -1114,6 +1144,8 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
             fn1: fun f (entry bb0) {
@@ -1135,6 +1167,8 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
             fn1: fun inc (entry bb0) {
@@ -1158,6 +1192,8 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
             fn1: fun f (entry bb0) {
