@@ -297,11 +297,10 @@ impl Function {
 
     fn succs(&self, block: BlockId) -> Vec<BlockId> {
         match self.blocks[block.0].insns.last().map(|insn| &self.insns[insn.0].opcode) {
-            None => vec![],
             Some(Opcode::Return) => vec![],
             Some(Opcode::CondBranch(iftrue, iffalse)) => vec![*iftrue, *iffalse],
             Some(Opcode::Branch(target)) => vec![*target],
-            insn => panic!("Unexpected terminator {insn:?}"),
+            _ => vec![],
         }
     }
 
