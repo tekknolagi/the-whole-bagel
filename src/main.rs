@@ -2,6 +2,7 @@
 #![allow(unused_mut)]
 #![allow(unused_variables)]
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
@@ -303,13 +304,29 @@ impl Function {
             insn => panic!("Unexpected terminator {insn:?}"),
         }
     }
+
+    fn rpo(&self) -> Vec<BlockId> {
+        let mut visited = HashSet::new();
+        let mut result = vec![];
+        self.po_from(self.entry, &mut result, &mut visited);
+        result.reverse();
+        result
+    }
+
+    fn po_from(&self, block: BlockId, result: &mut Vec<BlockId>, visited: &mut HashSet<BlockId>) {
+        if visited.contains(&block) { return; }
+        visited.insert(block);
+        for succ in self.succs(block) {
+            self.po_from(succ, result, visited);
+        }
+        result.push(block);
+    }
 }
 
 impl std::fmt::Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         writeln!(f, "fun {} (entry {}) {{", self.name, self.entry)?;
-        for (idx, block) in self.blocks.iter().enumerate() {
-            let block_id = BlockId(idx);
+        for block_id in self.rpo() {
             writeln!(f, "  {block_id} {{")?;
             for insn_id in &self.blocks[block_id.0].insns {
                 let Insn { opcode, operands } = &self.insns[insn_id.0];
