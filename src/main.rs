@@ -1045,6 +1045,30 @@ print a;",
     }
 
     #[test]
+    fn test_var_shadow() {
+        check("
+var a = 1;
+var a = 2;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Const(Int(2))
+                v4 = WriteLocal(Offset(1)) v3
+                v5 = ReadLocal(Offset(1))
+                v6 = Print v5
+                v7 = Const(Nil)
+                v8 = Return v7
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_if() {
         check("
 var a = 1;
