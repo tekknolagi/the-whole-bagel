@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+#![allow(dead_code)]
+#![allow(unused_mut)]
+#![allow(unused_variables)]
+use std::collections::HashMap;
 
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
@@ -195,6 +198,8 @@ struct InsnId(usize);
 struct BlockId(usize);
 #[derive(PartialEq, Copy, Clone)]
 struct FunId(usize);
+#[derive(Debug, PartialEq, Copy, Clone)]
+struct Offset(usize);
 
 impl std::fmt::Display for InsnId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -354,6 +359,9 @@ enum Opcode {
     Branch(BlockId),
     CondBranch(BlockId, BlockId),
     Phi,
+    PushFrame,
+    ReadLocal(Offset),
+    WriteLocal(Offset),
 }
 
 #[derive(Debug)]
@@ -421,7 +429,7 @@ enum VarKind {
 #[derive(Clone)]
 struct Env<'a> {
     fun: FunId,
-    bindings: HashMap<String, InsnId>,
+    bindings: HashMap<String, Offset>,
     parent: Option<&'a Env<'a>>,
 }
 
@@ -434,48 +442,25 @@ impl<'a> Env<'a> {
         Env { fun, bindings: HashMap::new(), parent: Some(parent) }
     }
 
-    fn lookup(&self, name: &String) -> Option<(VarKind, InsnId)> {
-        self.lookup_(VarKind::Local, name)
+    fn lookup(&self, name: &String) -> Option<Offset> {
+        self.bindings.get(name).copied()
     }
 
-    fn lookup_(&self, kind: VarKind, name: &String) -> Option<(VarKind, InsnId)> {
-        match self.bindings.get(name) {
-            None if self.parent.is_none() => None,
-            None => {
-                let parent = self.parent.as_ref().unwrap();
-                if parent.fun == self.fun {
-                    parent.lookup_(VarKind::Local, name)
-                } else {
-                    parent.lookup_(VarKind::Closure, name)
-                }
-            }
-            Some(value) => Some((kind, value.clone())),
-        }
+    fn is_defined(&self, name: &String) -> bool {
+        return self.bindings.get(name).is_some();
     }
 
-    fn define(&mut self, name: &String, value: InsnId) {
-        assert!(self.bindings.get(name).is_none());
-        self.bindings.insert(name.clone(), value);
-    }
-
-    fn set(&mut self, name: &String, value: InsnId) -> Option<VarKind> {
-        use std::collections::hash_map::Entry;
-        match (self.bindings.entry(name.clone()), &mut self.parent) {
-            (Entry::Vacant(entry), None) => None,
-            (Entry::Vacant(entry), Some(parent)) if self.fun == parent.fun =>
-                { entry.insert(value); Some(VarKind::Local) }
-            (Entry::Occupied(mut entry), _) =>
-                { entry.insert(value); Some(VarKind::Local) }
-            (Entry::Vacant(entry), Some(_)) => Some(VarKind::Closure),
-        }
+    fn define(&mut self, name: String) -> Offset {
+        let offset = Offset(self.bindings.len());
+        self.bindings.insert(name.clone(), offset);
+        offset
     }
 }
 
 struct Context {
     fun: FunId,
     block: BlockId,
-    entry_state: Vec<HashMap<String, InsnId>>,
-    exit_state: Vec<HashMap<String, InsnId>>,
+    frame: InsnId,
 }
 
 struct Parser<'a> {
@@ -489,6 +474,7 @@ enum ParseError {
     UnexpectedToken(Token),
     UnexpectedError,
     UnboundName(String),
+    VariableShadows(String),
 }
 
 impl Parser<'_> {
@@ -498,53 +484,13 @@ impl Parser<'_> {
 
     fn enter_fun(&mut self, fun: FunId) {
         let block = self.prog.funs[fun.0].entry;
-        self.context_stack.push(Context { fun, block, entry_state: vec![HashMap::new()], exit_state: vec![HashMap::new()] });
+        let frame = self.prog.push_insn(fun, block, Opcode::PushFrame, vec![]);
+        self.context_stack.push(Context { fun, block, frame });
         self.enter_block(block);
     }
 
-    fn value_of(&mut self, name: String) -> InsnId {
-        let fun = self.fun();
-        let block = self.block();
-        let insn = self.context_stack.last_mut().unwrap().exit_state[block.0].entry(name).or_insert_with(|| self.prog.new_placeholder(fun));
-        insn.clone()
-    }
-
-    fn define(&mut self, name: String, value: InsnId) -> InsnId {
-        let fun = self.fun();
-        let block = self.block();
-        self.context_stack.last_mut().unwrap().exit_state[block.0].insert(name, value.clone());
-        value
-    }
-
     fn leave_fun(&mut self) {
-        if let Some(Context { fun, block, entry_state, exit_state }) = self.context_stack.pop() {
-            // If the exit block doesn't explicitly return, implicitly return nil
-            if !self.prog.funs[fun.0].is_terminated(block) {
-                let nil = self.prog.push_insn(fun, block, Opcode::Const(Value::Nil), vec![]);
-                self.prog.push_insn(fun, block, Opcode::Return, vec![nil]);
-            }
-            // Find predecessors
-            let num_blocks = self.prog.funs[fun.0].blocks.len();
-            let mut preds = Vec::with_capacity(num_blocks);
-            preds.resize(num_blocks, HashSet::new());
-            for (block_idx, block) in self.prog.funs[fun.0].blocks.iter().enumerate() {
-                preds[block_idx].extend(self.prog.funs[fun.0].succs(BlockId(block_idx)));
-            }
-            // Link entry and exit states
-            for block_idx in 0..num_blocks {
-                for (name, value) in entry_state[block_idx].iter() {
-                    let mut values = vec![];
-                    for pred in preds[block_idx].iter() {
-                        values.push(exit_state[pred.0][name]);
-                    }
-                    if values.len() == 1 {
-                        self.prog.funs[fun.0].make_equal_to(*value, values[0]);
-                    } else {
-                        todo!()
-                    }
-                }
-            }
-            // Simplify phis
+        if let Some(Context { fun, block, frame }) = self.context_stack.pop() {
         } else {
             panic!("Function stack underflow");
         }
@@ -560,8 +506,6 @@ impl Parser<'_> {
 
     fn new_block(&mut self) -> BlockId {
         let fun = self.fun();
-        self.context_stack.last_mut().unwrap().entry_state.push(HashMap::new());
-        self.context_stack.last_mut().unwrap().exit_state.push(HashMap::new());
         self.prog.funs[fun.0].new_block()
     }
 
@@ -622,8 +566,8 @@ impl Parser<'_> {
                 let name = self.expect_ident()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression(&mut env)?;
-                self.define(name.clone(), value);
-                env.define(&name, value);
+                let offset = env.define(name);
+                self.push_insn(Opcode::WriteLocal(offset), vec![value]);
                 Ok(())
             }
             Some(Token::If) => {
@@ -657,7 +601,7 @@ impl Parser<'_> {
             }
             Some(Token::LCurly) => {
                 // New scope
-                let mut block_env = Env::from_parent(self.fun(), env);
+                let mut block_env = env.clone();
                 self.tokens.next();
                 while let Some(token) = self.tokens.peek() {
                     if *token == Token::RCurly { break; }
@@ -685,8 +629,8 @@ impl Parser<'_> {
                 Some(Token::Ident(name)) => {
                     let name = name.clone();
                     let param = self.push_insn(Opcode::Param(idx), vec![]);
-                    func_env.define(&name, param);
-                    self.define(name, param);
+                    let offset = func_env.define(name);
+                    self.push_insn(Opcode::WriteLocal(offset), vec![param]);
                     self.tokens.next();
                     idx += 1;
                 }
@@ -742,17 +686,16 @@ impl Parser<'_> {
                     self.tokens.next();
                     // TODO(max): Operator precedence ...?
                     let value = self.parse_expression(&mut env)?;
-                    match env.set(&name, value.clone()) {
-                        Some(VarKind::Local) => Ok(self.define(name, value)),
-                        // TODO(max): Figure out a local numbering scheme I guess
-                        Some(VarKind::Closure) => todo!("closure set"),
+                    match env.lookup(&name) {
+                        Some(offset) => {
+                            self.push_insn(Opcode::WriteLocal(offset), vec![value]);
+                            Ok(value)
+                        }
                         None => Err(ParseError::UnboundName(name)),
                     }
                 } else {
                     match env.lookup(&name) {
-                        Some((VarKind::Local, value)) => Ok(self.value_of(name)),
-                        // TODO(max): Figure out a local numbering scheme I guess
-                        Some((VarKind::Closure, value)) => todo!("closure get"),
+                        Some(offset) => Ok(self.push_insn(Opcode::ReadLocal(offset), vec![])),
                         None => Err(ParseError::UnboundName(name)),
                     }
                 }
@@ -934,9 +877,8 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0 = PushFrame
+                v1 = Const(Int(1))
               }
             }
         "#]])
@@ -948,13 +890,12 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Const(Int(2))
-                v2 = Mul v0, v1
-                v3 = Const(Int(3))
-                v4 = Add v2, v3
-                v5 = Const(Nil)
-                v6 = Return v5
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = Const(Int(2))
+                v3 = Mul v1, v2
+                v4 = Const(Int(3))
+                v5 = Add v3, v4
               }
             }
         "#]])
@@ -966,13 +907,12 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Const(Int(2))
-                v2 = Const(Int(3))
-                v3 = Mul v1, v2
-                v4 = Add v0, v3
-                v5 = Const(Nil)
-                v6 = Return v5
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = Const(Int(2))
+                v3 = Const(Int(3))
+                v4 = Mul v2, v3
+                v5 = Add v1, v4
               }
             }
         "#]])
@@ -984,11 +924,10 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Const(Int(2))
-                v2 = Add v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = Const(Int(2))
+                v3 = Add v1, v2
               }
             }
         "#]])
@@ -1002,11 +941,10 @@ mod parser_tests {
     Entry: fn0
     fn0: fun <toplevel> (entry bb0) {
       bb0 {
-        v0 = Const(Int(1))
-        v1 = Const(Int(2))
-        v2 = Add v0, v1
-        v3 = Const(Nil)
-        v4 = Return v3
+        v0 = PushFrame
+        v1 = Const(Int(1))
+        v2 = Const(Int(2))
+        v3 = Add v1, v2
       }
     }
 "#]])
@@ -1018,12 +956,11 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Const(Int(2))
-                v2 = Add v0, v1
-                v3 = Print v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = Const(Int(2))
+                v3 = Add v1, v2
+                v4 = Print v3
               }
             }
         "#]])
@@ -1038,10 +975,11 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Print v0
-                v2 = Const(Nil)
-                v3 = Return v2
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = ReadLocal(Offset(0))
+                v4 = Print v3
               }
             }
         "#]])
@@ -1057,11 +995,13 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Const(Int(2))
-                v2 = Print v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Const(Int(2))
+                v4 = WriteLocal(Offset(0)) v3
+                v5 = ReadLocal(Offset(0))
+                v6 = Print v5
               }
             }
         "#]])
@@ -1082,22 +1022,25 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Int(1))
-                v1 = Const(Int(2))
-                v2 = CondBranch(bb1, bb2) v1
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Const(Int(2))
+                v4 = CondBranch(bb1, bb2) v3
               }
               bb1 {
-                v3 = Const(Int(3))
-                v6 = Branch(bb3)
+                v5 = Const(Int(3))
+                v6 = WriteLocal(Offset(0)) v5
+                v10 = Branch(bb3)
               }
               bb2 {
-                v4 = Const(Int(4))
-                v5 = Branch(bb3)
+                v7 = Const(Int(4))
+                v8 = WriteLocal(Offset(0)) v7
+                v9 = Branch(bb3)
               }
               bb3 {
-                v8 = Print v7
-                v9 = Const(Nil)
-                v10 = Return v9
+                v11 = ReadLocal(Offset(0))
+                v12 = Print v11
               }
             }
         "#]])
@@ -1109,14 +1052,37 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Nil)
-                v1 = Return v0
+                v0 = PushFrame
               }
             }
             fn1: fun empty (entry bb0) {
               bb0 {
-                v0 = Const(Nil)
-                v1 = Return v0
+                v0 = PushFrame
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_scope() {
+        check("
+var a = 1;
+{
+    var a = 2;
+}
+print a;
+",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Const(Int(2))
+                v4 = WriteLocal(Offset(1)) v3
+                v5 = ReadLocal(Offset(0))
+                v6 = Print v5
               }
             }
         "#]])
@@ -1128,14 +1094,14 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Nil)
-                v1 = Return v0
+                v0 = PushFrame
               }
             }
             fn1: fun empty (entry bb0) {
               bb0 {
-                v0 = Const(Nil)
-                v1 = Return v0
+                v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
               }
             }
         "#]])
@@ -1147,14 +1113,16 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Nil)
-                v1 = Return v0
+                v0 = PushFrame
               }
             }
             fn1: fun f (entry bb0) {
               bb0 {
-                v0 = Param(0)
-                v1 = Return v0
+                v0 = PushFrame
+                v1 = Param(0)
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = ReadLocal(Offset(0))
+                v4 = Return v3
               }
             }
         "#]])
@@ -1166,16 +1134,18 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Nil)
-                v1 = Return v0
+                v0 = PushFrame
               }
             }
             fn1: fun inc (entry bb0) {
               bb0 {
-                v0 = Param(0)
-                v1 = Const(Int(1))
-                v2 = Add v0, v1
-                v3 = Return v2
+                v0 = PushFrame
+                v1 = Param(0)
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = ReadLocal(Offset(0))
+                v4 = Const(Int(1))
+                v5 = Add v3, v4
+                v6 = Return v5
               }
             }
         "#]])
@@ -1187,18 +1157,41 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = Const(Nil)
-                v1 = Return v0
+                v0 = PushFrame
               }
             }
             fn1: fun f (entry bb0) {
               bb0 {
-                v0 = Param(0)
-                v1 = Param(1)
-                v2 = Add v0, v1
-                v3 = Return v2
+                v0 = PushFrame
+                v1 = Param(0)
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Param(1)
+                v4 = WriteLocal(Offset(1)) v3
+                v5 = ReadLocal(Offset(0))
+                v6 = ReadLocal(Offset(1))
+                v7 = Add v5, v6
+                v8 = Return v7
               }
             }
         "#]])
     }
+
+    // #[test]
+    // fn test_read_global() {
+    //     check("var a = 1; fun empty() { return a; }", expect![[r#"
+    //         Entry: fn0
+    //         fn0: fun <toplevel> (entry bb0) {
+    //           bb0 {
+    //             v0 = Const(Nil)
+    //             v1 = Return v0
+    //           }
+    //         }
+    //         fn1: fun empty (entry bb0) {
+    //           bb0 {
+    //             v0 = Const(Nil)
+    //             v1 = Return v0
+    //           }
+    //         }
+    //     "#]])
+    // }
 }
