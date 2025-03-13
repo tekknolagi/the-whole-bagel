@@ -415,7 +415,6 @@ impl Function {
     }
 
     fn eliminate_dead_code(&mut self) {
-        let mut mark = vec![false; self.insns.len()];
         let mut worklist = VecDeque::new();
         for block_id in self.rpo() {
             for insn_id in &self.blocks[block_id.0].insns {
@@ -425,6 +424,7 @@ impl Function {
                 }
             }
         }
+        let mut mark = vec![false; self.insns.len()];
         while let Some(insn) = worklist.pop_front() {
             if mark[insn.0] { continue; }
             mark[insn.0] = true;
