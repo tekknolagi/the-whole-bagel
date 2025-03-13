@@ -1435,6 +1435,33 @@ print a;",
     }
 
     #[test]
+    fn test_store() {
+        check("
+var a = 1;
+a = 2;
+a = 3;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Const(Int(2))
+                v4 = WriteLocal(Offset(0)) v3
+                v5 = Const(Int(3))
+                v6 = WriteLocal(Offset(0)) v5
+                v5 = Const(Int(3))
+                v8 = Print v5
+                v9 = Const(Nil)
+                v10 = Return v9
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_shadow() {
         check("
 var a = 1;
