@@ -3,6 +3,7 @@
 #![allow(unused_variables)]
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
@@ -383,6 +384,68 @@ impl Function {
                 let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands });
                 self.make_equal_to(insn_id, phi);
             }
+        }
+    }
+
+    fn is_critical(&self, insn: InsnId) -> bool {
+        match &self.insns[insn.0].opcode {
+            Opcode::Const(_) => false,
+            Opcode::Abort => true,
+            Opcode::Print => true,
+            Opcode::Return => true,
+            Opcode::Add => true,
+            Opcode::Sub => true,
+            Opcode::Mul => true,
+            Opcode::Div => true,
+            Opcode::Equal => false,
+            Opcode::NotEqual => false,
+            Opcode::Greater => true,
+            Opcode::GreaterEqual => true,
+            Opcode::Less => true,
+            Opcode::LessEqual => true,
+            Opcode::Param(_) => false,
+            Opcode::Branch(_) => true,
+            Opcode::CondBranch(..) => true,
+            Opcode::Phi => false,
+            Opcode::PushFrame => false,
+            Opcode::ReadLocal(_) => false,
+            Opcode::WriteLocal(_) => true,
+            Opcode::GuardInt => true,
+        }
+    }
+
+    fn eliminate_dead_code(&mut self) {
+        let mut mark = vec![false; self.insns.len()];
+        let mut worklist = VecDeque::new();
+        for block_id in self.rpo() {
+            for insn_id in &self.blocks[block_id.0].insns {
+                let insn_id = self.find(*insn_id);
+                if self.is_critical(insn_id) {
+                    mark[insn_id.0] = true;
+                    worklist.push_back(insn_id);
+                }
+            }
+        }
+        while let Some(insn) = worklist.pop_front() {
+            let insn_id = self.find(insn);
+            for operand in &self.insns[insn.0].operands {
+                let operand = self.find(*operand);
+                if !mark[operand.0] {
+                    mark[operand.0] = true;
+                    worklist.push_back(operand);
+                }
+            }
+        }
+        for block_id in self.rpo() {
+            let old_block = &self.blocks[block_id.0].insns;
+            let mut new_block = vec![];
+            for insn_id in old_block {
+                let insn_id = self.find(*insn_id);
+                if mark[insn_id.0] {
+                    new_block.push(insn_id);
+                }
+            }
+            self.blocks[block_id.0].insns = new_block;
         }
     }
 }
@@ -1413,8 +1476,23 @@ mod opt_tests {
         let mut actual = parser.prog;
         for fun in &mut actual.funs {
             fun.unbox_locals();
+            fun.eliminate_dead_code();
         }
         expect.assert_eq(format!("{actual}").as_str());
+    }
+
+    #[test]
+    fn test_const() {
+        check("1; 2; 3;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v4 = Const(Nil)
+                v5 = Return v4
+              }
+            }
+        "#]])
     }
 
     #[test]
