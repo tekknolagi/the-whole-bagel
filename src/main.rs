@@ -483,7 +483,6 @@ enum Value {
 
 #[derive(Debug)]
 enum Opcode {
-    Placeholder,
     Const(Value),
     Abort,
     Print,
@@ -499,8 +498,6 @@ enum Opcode {
     Less,
     LessEqual,
     Param(usize),
-    ClosureRef(usize),
-    ClosureSet(usize),
     Branch(BlockId),
     CondBranch(BlockId, BlockId),
     Phi,
@@ -541,12 +538,6 @@ impl Program {
         fun
     }
 
-    fn new_placeholder(&mut self, fun: FunId) -> InsnId {
-        let result = InsnId(self.funs[fun.0].insns.len());
-        self.funs[fun.0].insns.push(Insn { opcode: Opcode::Placeholder, operands: vec![] });
-        result
-    }
-
     fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<InsnId>) -> InsnId {
         // TODO(max): Catch double terminators
         let result = self.funs[fun.0].new_insn(Insn { opcode, operands });
@@ -564,11 +555,6 @@ impl std::fmt::Display for Program {
         }
         Ok(())
     }
-}
-
-enum VarKind {
-    Closure,
-    Local,
 }
 
 #[derive(Clone)]
