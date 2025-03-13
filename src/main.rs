@@ -421,19 +421,17 @@ impl Function {
             for insn_id in &self.blocks[block_id.0].insns {
                 let insn_id = self.find(*insn_id);
                 if self.is_critical(insn_id) {
-                    mark[insn_id.0] = true;
                     worklist.push_back(insn_id);
                 }
             }
         }
         while let Some(insn) = worklist.pop_front() {
+            if mark[insn.0] { continue; }
+            mark[insn.0] = true;
             let insn_id = self.find(insn);
             for operand in &self.insns[insn.0].operands {
                 let operand = self.find(*operand);
-                if !mark[operand.0] {
-                    mark[operand.0] = true;
-                    worklist.push_back(operand);
-                }
+                worklist.push_back(operand);
             }
         }
         for block_id in self.rpo() {
