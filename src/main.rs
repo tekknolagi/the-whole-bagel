@@ -957,6 +957,16 @@ mod lexer_tests {
     }
 
     #[test]
+    fn test_if() {
+        check("if", expect!["[If]"])
+    }
+
+    #[test]
+    fn test_while() {
+        check("while", expect!["[While]"])
+    }
+
+    #[test]
     fn test_comment() {
         check("var a =
                // a comment
