@@ -340,7 +340,7 @@ impl Function {
         }
         let empty_state = vec![HashSet::new(); self.num_locals];
         let mut block_entry = vec![empty_state.clone(); self.blocks.len()];
-        let mut replacements = HashMap::new();
+        let mut replacements: HashMap<InsnId, Vec<InsnId>> = HashMap::new();
         let mut last_pass = false;
         loop {
             let mut changed = false;
@@ -353,7 +353,7 @@ impl Function {
                             env[offset.0] = HashSet::from([self.find(operands[1])]);
                         }
                         Opcode::ReadLocal(offset) if last_pass => {
-                            replacements.insert(*insn_id, env[offset.0].clone());
+                            replacements.insert(*insn_id, env[offset.0].iter().map(|id| *id).collect());
                         }
                         _ => {}
                     }
@@ -373,16 +373,15 @@ impl Function {
                 last_pass = true;
             }
         }
-        for (insn_id, values) in replacements {
-            if values.len() == 0 {
-                panic!("Should have at least one value")
-            } else if values.len() == 1 {
-                self.make_equal_to(insn_id, values.into_iter().next().unwrap());
-            } else {
-                let mut operands: Vec<_> = values.into_iter().collect();
-                operands.sort();
-                let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands });
-                self.make_equal_to(insn_id, phi);
+        for (insn_id, mut operands) in replacements {
+            match operands[..] {
+                [] => panic!("Should have at least one value"),
+                [val] => self.make_equal_to(insn_id, val),
+                _ => {
+                    operands.sort();
+                    let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands });
+                    self.make_equal_to(insn_id, phi);
+                }
             }
         }
     }
