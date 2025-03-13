@@ -349,7 +349,7 @@ impl Function {
                     let Insn { opcode, operands } = &self.insns[insn_id.0];
                     match opcode {
                         Opcode::WriteLocal(offset) => {
-                            env[offset.0] = HashSet::from([self.find(operands[0])]);
+                            env[offset.0] = HashSet::from([self.find(operands[1])]);
                         }
                         Opcode::ReadLocal(offset) if last_pass => {
                             replacements.insert(*insn_id, env[offset.0].clone());
@@ -590,6 +590,10 @@ impl Parser<'_> {
         self.context_stack.last().expect("Function stack underflow").block
     }
 
+    fn frame(&self) -> InsnId {
+        self.context_stack.last().expect("Function stack underflow").frame
+    }
+
     fn new_block(&mut self) -> BlockId {
         let fun = self.fun();
         self.prog.funs[fun.0].new_block()
@@ -705,14 +709,14 @@ impl Parser<'_> {
         let fun_id = self.fun();
         let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
         *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-        self.push_insn(Opcode::WriteLocal(offset), vec![value]);
+        self.push_insn(Opcode::WriteLocal(offset), vec![self.frame(), value]);
     }
 
     fn read_local(&mut self, offset: Offset) -> InsnId {
         let fun_id = self.fun();
         let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
         *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-        self.push_insn(Opcode::ReadLocal(offset), vec![])
+        self.push_insn(Opcode::ReadLocal(offset), vec![self.frame()])
     }
 
     fn parse_function(&mut self, env: &Env) -> Result<(), ParseError> {
@@ -1130,8 +1134,8 @@ print a;",
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
-                v3 = ReadLocal(Offset(0))
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = ReadLocal(Offset(0)) v0
                 v4 = Print v3
                 v5 = Const(Nil)
                 v6 = Return v5
@@ -1152,10 +1156,10 @@ print a;",
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(0)) v3
-                v5 = ReadLocal(Offset(0))
+                v4 = WriteLocal(Offset(0)) v0, v3
+                v5 = ReadLocal(Offset(0)) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1176,10 +1180,10 @@ print a;",
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(1)) v3
-                v5 = ReadLocal(Offset(1))
+                v4 = WriteLocal(Offset(1)) v0, v3
+                v5 = ReadLocal(Offset(1)) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1205,22 +1209,22 @@ print a;
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
                 v4 = CondBranch(bb1, bb2) v3
               }
               bb2 {
                 v7 = Const(Int(4))
-                v8 = WriteLocal(Offset(0)) v7
+                v8 = WriteLocal(Offset(0)) v0, v7
                 v9 = Branch(bb3)
               }
               bb1 {
                 v5 = Const(Int(3))
-                v6 = WriteLocal(Offset(0)) v5
+                v6 = WriteLocal(Offset(0)) v0, v5
                 v10 = Branch(bb3)
               }
               bb3 {
-                v11 = ReadLocal(Offset(0))
+                v11 = ReadLocal(Offset(0)) v0
                 v12 = Print v11
                 v13 = Const(Nil)
                 v14 = Return v13
@@ -1265,10 +1269,10 @@ print a;
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(1)) v3
-                v5 = ReadLocal(Offset(0))
+                v4 = WriteLocal(Offset(1)) v0, v3
+                v5 = ReadLocal(Offset(0)) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1313,8 +1317,8 @@ print a;
               bb0 {
                 v0 = PushFrame
                 v1 = Param(0)
-                v2 = WriteLocal(Offset(0)) v1
-                v3 = ReadLocal(Offset(0))
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = ReadLocal(Offset(0)) v0
                 v4 = Return v3
               }
             }
@@ -1336,8 +1340,8 @@ print a;
               bb0 {
                 v0 = PushFrame
                 v1 = Param(0)
-                v2 = WriteLocal(Offset(0)) v1
-                v3 = ReadLocal(Offset(0))
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = ReadLocal(Offset(0)) v0
                 v4 = Const(Int(1))
                 v5 = GuardInt v3
                 v6 = GuardInt v4
@@ -1363,11 +1367,11 @@ print a;
               bb0 {
                 v0 = PushFrame
                 v1 = Param(0)
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Param(1)
-                v4 = WriteLocal(Offset(1)) v3
-                v5 = ReadLocal(Offset(0))
-                v6 = ReadLocal(Offset(1))
+                v4 = WriteLocal(Offset(1)) v0, v3
+                v5 = ReadLocal(Offset(0)) v0
+                v6 = ReadLocal(Offset(1)) v0
                 v7 = GuardInt v5
                 v8 = GuardInt v6
                 v9 = Add v7, v8
@@ -1424,7 +1428,7 @@ print a;",
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v1 = Const(Int(1))
                 v4 = Print v1
                 v5 = Const(Nil)
@@ -1447,11 +1451,11 @@ print a;",
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(0)) v3
+                v4 = WriteLocal(Offset(0)) v0, v3
                 v5 = Const(Int(3))
-                v6 = WriteLocal(Offset(0)) v5
+                v6 = WriteLocal(Offset(0)) v0, v5
                 v5 = Const(Int(3))
                 v8 = Print v5
                 v9 = Const(Nil)
@@ -1473,9 +1477,9 @@ print a;",
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(1)) v3
+                v4 = WriteLocal(Offset(1)) v0, v3
                 v3 = Const(Int(2))
                 v6 = Print v3
                 v7 = Const(Nil)
@@ -1501,18 +1505,18 @@ print a;",
               bb0 {
                 v0 = PushFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v1
+                v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
                 v4 = CondBranch(bb1, bb2) v3
               }
               bb2 {
                 v7 = Const(Int(4))
-                v8 = WriteLocal(Offset(0)) v7
+                v8 = WriteLocal(Offset(0)) v0, v7
                 v9 = Branch(bb3)
               }
               bb1 {
                 v5 = Const(Int(3))
-                v6 = WriteLocal(Offset(0)) v5
+                v6 = WriteLocal(Offset(0)) v0, v5
                 v10 = Branch(bb3)
               }
               bb3 {
