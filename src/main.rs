@@ -193,13 +193,13 @@ impl<'a> std::iter::Iterator for Lexer<'a> {
     }
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Eq, Hash, Clone, PartialOrd, Ord)]
 struct InsnId(usize);
 #[derive(PartialEq, Copy, Clone, Eq, Hash)]
 struct BlockId(usize);
 #[derive(PartialEq, Copy, Clone)]
 struct FunId(usize);
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
 struct Offset(usize);
 
 impl std::fmt::Display for InsnId {
@@ -256,11 +256,12 @@ struct Function {
     insns: Vec<Insn>,
     union_find: Vec<Option<InsnId>>,
     blocks: Vec<Block>,
+    num_locals: usize,
 }
 
 impl Function {
     fn new(name: String) -> Function {
-        Function { name, entry: BlockId(0), insns: vec![], union_find: vec![], blocks: vec![Block::new()] }
+        Function { name, entry: BlockId(0), insns: vec![], union_find: vec![], blocks: vec![Block::new()], num_locals: 0 }
     }
 
     fn find(&self, insn: InsnId) -> InsnId {
@@ -277,7 +278,7 @@ impl Function {
     fn make_equal_to(&mut self, left: InsnId, right: InsnId) {
         let found = self.find(left);
         if found.0 >= self.union_find.len() {
-            self.union_find.resize(found.0, None);
+            self.union_find.resize(found.0+1, None);
         }
         self.union_find[found.0] = Some(right);
     }
@@ -285,6 +286,12 @@ impl Function {
     fn new_block(&mut self) -> BlockId {
         let result = BlockId(self.blocks.len());
         self.blocks.push(Block::new());
+        result
+    }
+
+    fn new_insn(&mut self, insn: Insn) -> InsnId {
+        let result = InsnId(self.insns.len());
+        self.insns.push(insn);
         result
     }
 
@@ -320,6 +327,64 @@ impl Function {
         }
         result.push(block);
     }
+
+    fn unbox_locals(&mut self) {
+        fn join(left: &Vec<HashSet<InsnId>>, right: &Vec<HashSet<InsnId>>) -> Vec<HashSet<InsnId>> {
+            assert_eq!(left.len(), right.len());
+            let mut result = vec![HashSet::new(); left.len()];
+            for idx in 0..left.len() {
+                result[idx] = left[idx].union(&right[idx]).map(|insn| *insn).collect();
+            }
+            result
+        }
+        let empty_state = vec![HashSet::new(); self.num_locals];
+        let mut block_entry = vec![empty_state.clone(); self.blocks.len()];
+        let mut replacements = HashMap::new();
+        let mut last_pass = false;
+        loop {
+            let mut changed = false;
+            for block_id in self.rpo() {
+                let mut env: Vec<_> = block_entry[block_id.0].clone();
+                for insn_id in &self.blocks[block_id.0].insns {
+                    let Insn { opcode, operands } = &self.insns[insn_id.0];
+                    match opcode {
+                        Opcode::WriteLocal(offset) => {
+                            env[offset.0] = HashSet::from([self.find(operands[0])]);
+                        }
+                        Opcode::ReadLocal(offset) if last_pass => {
+                            replacements.insert(*insn_id, env[offset.0].clone());
+                        }
+                        _ => {}
+                    }
+                }
+                for succ in self.succs(block_id) {
+                    let new = join(&block_entry[succ.0], &env);
+                    if block_entry[succ.0] != new {
+                        block_entry[succ.0] = new;
+                        changed = true;
+                    }
+                }
+            }
+            if last_pass {
+                break;
+            }
+            if !changed {
+                last_pass = true;
+            }
+        }
+        for (insn_id, values) in replacements {
+            if values.len() == 0 {
+                panic!("Should have at least one value")
+            } else if values.len() == 1 {
+                self.make_equal_to(insn_id, values.into_iter().next().unwrap());
+            } else {
+                let mut operands: Vec<_> = values.into_iter().collect();
+                operands.sort();
+                let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands });
+                self.make_equal_to(insn_id, phi);
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for Function {
@@ -328,6 +393,7 @@ impl std::fmt::Display for Function {
         for block_id in self.rpo() {
             writeln!(f, "  {block_id} {{")?;
             for insn_id in &self.blocks[block_id.0].insns {
+                let insn_id = self.find(*insn_id);
                 let Insn { opcode, operands } = &self.insns[insn_id.0];
                 write!(f, "    {insn_id} = {:?}", opcode)?;
                 let mut sep = "";
@@ -420,8 +486,7 @@ impl Program {
 
     fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<InsnId>) -> InsnId {
         // TODO(max): Catch double terminators
-        let result = InsnId(self.funs[fun.0].insns.len());
-        self.funs[fun.0].insns.push(Insn { opcode, operands });
+        let result = self.funs[fun.0].new_insn(Insn { opcode, operands });
         self.funs[fun.0].blocks[block.0].insns.push(result);
         result
     }
@@ -588,7 +653,7 @@ impl Parser<'_> {
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression(&mut env)?;
                 let offset = env.define(name);
-                self.push_insn(Opcode::WriteLocal(offset), vec![value]);
+                self.write_local(offset, value);
                 Ok(())
             }
             Some(Token::If) => {
@@ -636,6 +701,20 @@ impl Parser<'_> {
         self.expect(Token::Semicolon)
     }
 
+    fn write_local(&mut self, offset: Offset, value: InsnId) {
+        let fun_id = self.fun();
+        let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
+        *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
+        self.push_insn(Opcode::WriteLocal(offset), vec![value]);
+    }
+
+    fn read_local(&mut self, offset: Offset) -> InsnId {
+        let fun_id = self.fun();
+        let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
+        *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
+        self.push_insn(Opcode::ReadLocal(offset), vec![])
+    }
+
     fn parse_function(&mut self, env: &Env) -> Result<(), ParseError> {
         let name = self.expect_ident()?;
         let fun = self.prog.push_fun(name);
@@ -651,7 +730,7 @@ impl Parser<'_> {
                     let name = name.clone();
                     let param = self.push_insn(Opcode::Param(idx), vec![]);
                     let offset = func_env.define(name);
-                    self.push_insn(Opcode::WriteLocal(offset), vec![param]);
+                    self.write_local(offset, param);
                     self.tokens.next();
                     idx += 1;
                 }
@@ -709,14 +788,14 @@ impl Parser<'_> {
                     let value = self.parse_expression(&mut env)?;
                     match env.lookup(&name) {
                         Some(offset) => {
-                            self.push_insn(Opcode::WriteLocal(offset), vec![value]);
+                            self.write_local(offset, value);
                             Ok(value)
                         }
                         None => Err(ParseError::UnboundName(name)),
                     }
                 } else {
                     match env.lookup(&name) {
-                        Some(offset) => Ok(self.push_insn(Opcode::ReadLocal(offset), vec![])),
+                        Some(offset) => Ok(self.read_local(offset)),
                         None => Err(ParseError::UnboundName(name)),
                     }
                 }
@@ -1306,4 +1385,106 @@ print a;
     //         }
     //     "#]])
     // }
+}
+
+#[cfg(test)]
+mod opt_tests {
+    use super::{Lexer, Parser};
+    use expect_test::{expect, Expect};
+
+    fn check(source: &str, expect: Expect) {
+        let mut lexer = Lexer::from_str(source);
+        let mut parser = Parser::from_lexer(&mut lexer);
+        parser.parse_program().unwrap();
+        let mut actual = parser.prog;
+        for fun in &mut actual.funs {
+            fun.unbox_locals();
+        }
+        expect.assert_eq(format!("{actual}").as_str());
+    }
+
+    #[test]
+    fn test_var() {
+        check("
+var a = 1;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v1 = Const(Int(1))
+                v4 = Print v1
+                v5 = Const(Nil)
+                v6 = Return v5
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_shadow() {
+        check("
+var a = 1;
+var a = 2;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Const(Int(2))
+                v4 = WriteLocal(Offset(1)) v3
+                v3 = Const(Int(2))
+                v6 = Print v3
+                v7 = Const(Nil)
+                v8 = Return v7
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_if() {
+        check("
+var a = 1;
+if (2) {
+    a = 3;
+} else {
+    a = 4;
+}
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v1
+                v3 = Const(Int(2))
+                v4 = CondBranch(bb1, bb2) v3
+              }
+              bb2 {
+                v7 = Const(Int(4))
+                v8 = WriteLocal(Offset(0)) v7
+                v9 = Branch(bb3)
+              }
+              bb1 {
+                v5 = Const(Int(3))
+                v6 = WriteLocal(Offset(0)) v5
+                v10 = Branch(bb3)
+              }
+              bb3 {
+                v15 = Phi v5, v7
+                v12 = Print v15
+                v13 = Const(Nil)
+                v14 = Return v13
+              }
+            }
+        "#]])
+    }
 }
