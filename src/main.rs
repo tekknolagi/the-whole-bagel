@@ -429,7 +429,7 @@ impl Function {
             if mark[insn.0] { continue; }
             mark[insn.0] = true;
             let insn_id = self.find(insn);
-            for operand in &self.insns[insn.0].operands {
+            for operand in &self.insns[insn_id.0].operands {
                 let operand = self.find(*operand);
                 worklist.push_back(operand);
             }
