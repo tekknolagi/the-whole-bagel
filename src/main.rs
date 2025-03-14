@@ -410,6 +410,8 @@ impl Function {
             Opcode::ReadLocal(_) => false,
             Opcode::WriteLocal(_) => true,
             Opcode::GuardInt => true,
+            Opcode::NewClass(_) => false,
+            Opcode::This => false,
         }
     }
 
@@ -479,6 +481,12 @@ enum Value {
 }
 
 #[derive(Debug)]
+struct ClassDef {
+    name: String,
+    methods: Vec<FunId>,
+}
+
+#[derive(Debug)]
 enum Opcode {
     Const(Value),
     Abort,
@@ -499,9 +507,11 @@ enum Opcode {
     CondBranch(BlockId, BlockId),
     Phi,
     PushFrame,
+    NewClass(ClassDef),
     ReadLocal(Offset),
     WriteLocal(Offset),
     GuardInt,
+    This,
 }
 
 #[derive(Debug)]
@@ -674,10 +684,77 @@ impl Parser<'_> {
         self.enter_fun(self.prog.entry);
         let mut env = Env::new(self.prog.entry);
         while let Some(token) = self.tokens.peek() {
-            self.parse_statement(&mut env)?;
+            self.parse_toplevel(&mut env)?;
         }
         self.leave_fun();
         Ok(())
+    }
+
+    fn parse_class(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
+        self.expect(Token::Class)?;
+        let name = self.expect_ident()?;
+        if let Some(Token::Less) = self.tokens.peek() {
+            todo!("inheritance");
+        }
+        self.expect(Token::LCurly)?;
+        let mut methods = vec![];
+        loop {
+            if let Some(Token::RCurly) = self.tokens.peek() {
+                break;
+            }
+            let method = self.parse_method(&mut env)?;
+            methods.push(method);
+        }
+        self.expect(Token::RCurly)?;
+        self.push_insn(Opcode::NewClass(ClassDef { name, methods }), vec![]);
+        Ok(())
+    }
+
+    fn parse_method(&mut self, env: &Env) -> Result<FunId, ParseError> {
+        let name = self.expect_ident()?;
+        let fun = self.prog.push_fun(name);
+        self.enter_fun(fun);
+        self.expect(Token::LParen)?;
+        let mut idx = 0;
+        // TODO(max): We need a way to find out if a variable is from an outer context (global,
+        // closure) when using it so we don't bake in the value at compile-time.
+        let mut func_env = Env::from_parent(fun, &env);
+        let offset = func_env.define("this".into());
+        let this = self.push_insn(Opcode::This, vec![]);
+        self.write_local(offset, this);
+        loop {
+            match self.tokens.peek() {
+                Some(Token::Ident(name)) => {
+                    let name = name.clone();
+                    let param = self.push_insn(Opcode::Param(idx), vec![]);
+                    let offset = func_env.define(name);
+                    self.write_local(offset, param);
+                    self.tokens.next();
+                    idx += 1;
+                }
+                _ => break,
+            }
+            match self.tokens.peek() {
+                Some(Token::Comma) => { self.tokens.next(); }
+                _ => break,
+            }
+        }
+        self.expect(Token::RParen)?;
+        self.expect(Token::LCurly)?;
+        while let Some(token) = self.tokens.peek() {
+            if *token == Token::RCurly { break; }
+            self.parse_statement(&mut func_env)?;
+        }
+        self.expect(Token::RCurly)?;
+        self.leave_fun();
+        Ok(fun)
+    }
+
+    fn parse_toplevel(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
+        match self.tokens.peek() {
+            Some(Token::Class) => self.parse_class(&mut env),
+            _ => self.parse_statement(&mut env),
+        }
     }
 
     fn parse_statement(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
@@ -1448,6 +1525,83 @@ print a;
                 v8 = GuardInt v6
                 v9 = Add v7, v8
                 v10 = Return v9
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_class() {
+        check("class C { }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = NewClass(ClassDef { name: "C", methods: [] })
+                v2 = Const(Nil)
+                v3 = Return v2
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_class_with_empty_method() {
+        check("class C {
+            empty() { }
+        }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = NewClass(ClassDef { name: "C", methods: [fn1] })
+                v2 = Const(Nil)
+                v3 = Return v2
+              }
+            }
+            fn1: fun empty (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = This
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_class_with_empty_methods() {
+        check("class C {
+            empty0() { }
+            empty1() { }
+        }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = NewClass(ClassDef { name: "C", methods: [fn1, fn2] })
+                v2 = Const(Nil)
+                v3 = Return v2
+              }
+            }
+            fn1: fun empty0 (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = This
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+            fn2: fun empty1 (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = This
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
         "#]])
