@@ -507,6 +507,7 @@ enum Opcode {
 #[derive(Debug)]
 struct Insn {
     opcode: Opcode,
+    // TODO(max): Use smallvec
     operands: Vec<InsnId>,
 }
 
