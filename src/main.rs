@@ -1707,6 +1707,57 @@ print a;",
     }
 
     #[test]
+    fn test_store_itself() {
+        check("
+var a = 1;
+a = a;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v1 = Const(Int(1))
+                v4 = WriteLocal(Offset(0)) v0, v1
+                v1 = Const(Int(1))
+                v6 = Print v1
+                v7 = Const(Nil)
+                v8 = Return v7
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_store_var() {
+        check("
+var a = 1;
+var b = 2;
+a = b;
+print a;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Int(1))
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Int(2))
+                v4 = WriteLocal(Offset(1)) v0, v3
+                v3 = Const(Int(2))
+                v6 = WriteLocal(Offset(0)) v0, v3
+                v3 = Const(Int(2))
+                v8 = Print v3
+                v9 = Const(Nil)
+                v10 = Return v9
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_shadow() {
         check("
 var a = 1;
