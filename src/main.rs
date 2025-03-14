@@ -122,7 +122,7 @@ impl<'a> Lexer<'a> {
         result.push(c);
         loop {
             match self.chars.peek() {
-                Some(c) if c.is_alphabetic() || *c == '_' => result.push(*c),
+                Some(c) if c.is_alphabetic() || *c == '_' || c.is_digit(NUMBER_BASE) => result.push(*c),
                 _ => break,
             }
             self.chars.next();
@@ -1006,6 +1006,31 @@ mod lexer_tests {
     fn test_var() {
         check("var a = 1;", expect![[r#"[Var, Ident("a"), Equal, Int(1), Semicolon]"#]])
     }
+
+    #[test]
+    fn test_ident_char() {
+        check("a", expect![[r#"[Ident("a")]"#]])
+    }
+
+    #[test]
+    fn test_ident_chars() {
+        check("abc", expect![[r#"[Ident("abc")]"#]])
+    }
+
+    #[test]
+    fn test_ident_chars_underscore() {
+        check("abc_def", expect![[r#"[Ident("abc_def")]"#]])
+    }
+
+    #[test]
+    fn test_ident_chars_digits() {
+        check("abc123", expect![[r#"[Ident("abc123")]"#]])
+    }
+
+    // #[test]
+    // fn test_ident_underscore() {
+    //     check("_", expect!["[]"])
+    // }
 
     #[test]
     fn test_if() {
