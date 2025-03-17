@@ -412,6 +412,7 @@ impl Function {
             Opcode::GuardInt => true,
             Opcode::NewClass(_) => false,
             Opcode::This => false,
+            Opcode::NewClosure(_) => false,
         }
     }
 
@@ -511,6 +512,7 @@ enum Opcode {
     Phi,
     PushFrame,
     NewClass(ClassDef),
+    NewClosure(FunId),
     ReadLocal(Offset),
     WriteLocal(Offset),
     GuardInt,
@@ -846,9 +848,9 @@ impl Parser<'_> {
         self.push_insn(Opcode::ReadLocal(offset), vec![self.frame()])
     }
 
-    fn parse_function(&mut self, env: &Env) -> Result<(), ParseError> {
+    fn parse_function(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
         let name = self.expect_ident()?;
-        let fun = self.prog.push_fun(name);
+        let fun = self.prog.push_fun(name.clone());
         self.enter_fun(fun);
         self.expect(Token::LParen)?;
         let mut idx = 0;
@@ -880,6 +882,9 @@ impl Parser<'_> {
         }
         self.expect(Token::RCurly)?;
         self.leave_fun();
+        let closure = self.push_insn(Opcode::NewClosure(fun), vec![]);
+        let offset = env.define(name);
+        self.write_local(offset, closure);
         Ok(())
     }
 
@@ -1392,8 +1397,10 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v1 = NewClosure(fn1)
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
             fn1: fun empty (entry bb0) {
@@ -1440,8 +1447,10 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v1 = NewClosure(fn1)
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
             fn1: fun empty (entry bb0) {
@@ -1461,8 +1470,10 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v1 = NewClosure(fn1)
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
             fn1: fun f (entry bb0) {
@@ -1484,8 +1495,10 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v1 = NewClosure(fn1)
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
             fn1: fun inc (entry bb0) {
@@ -1511,8 +1524,10 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = PushFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v1 = NewClosure(fn1)
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
             fn1: fun f (entry bb0) {
@@ -1531,6 +1546,33 @@ print a;
               }
             }
         "#]])
+    }
+
+    #[test]
+    fn test_reference_func() {
+        check("
+            fun f() { }
+            f;
+        ", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = NewClosure(fn1)
+                v2 = WriteLocal(Offset(0)) v0, v1
+                v3 = ReadLocal(Offset(0)) v0
+                v4 = Const(Nil)
+                v5 = Return v4
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = PushFrame
+                v1 = Const(Nil)
+                v2 = Return v1
+              }
+            }
+        "#]]);
     }
 
     #[test]
