@@ -12,13 +12,7 @@
 
 ## Thoughts
 
-* Potential source languages
-  * ChocoPy
-  * COOL
-  * MiniJava
-  * Decaf
-  * GoLite
-  * Xi
+* Source language
   * Lox
 * Desired language features
   * Structs
