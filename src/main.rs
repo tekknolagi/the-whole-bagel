@@ -452,10 +452,13 @@ impl Function {
 impl std::fmt::Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         writeln!(f, "fun {} (entry {}) {{", self.name, self.entry)?;
+        let mut seen = HashSet::new();
         for block_id in self.rpo() {
             writeln!(f, "  {block_id} {{")?;
             for insn_id in &self.blocks[block_id.0].insns {
                 let insn_id = self.find(*insn_id);
+                if seen.contains(&insn_id) { continue; }
+                seen.insert(insn_id);
                 let Insn { opcode, operands } = &self.insns[insn_id.0];
                 write!(f, "    {insn_id} = {:?}", opcode)?;
                 let mut sep = "";
@@ -1670,7 +1673,6 @@ print a;",
                 v0 = PushFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
-                v1 = Const(Int(1))
                 v4 = Print v1
                 v5 = Const(Nil)
                 v6 = Return v5
@@ -1697,7 +1699,6 @@ print a;",
                 v4 = WriteLocal(Offset(0)) v0, v3
                 v5 = Const(Int(3))
                 v6 = WriteLocal(Offset(0)) v0, v5
-                v5 = Const(Int(3))
                 v8 = Print v5
                 v9 = Const(Nil)
                 v10 = Return v9
@@ -1719,9 +1720,7 @@ print a;",
                 v0 = PushFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
-                v1 = Const(Int(1))
                 v4 = WriteLocal(Offset(0)) v0, v1
-                v1 = Const(Int(1))
                 v6 = Print v1
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1746,9 +1745,7 @@ print a;",
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
                 v4 = WriteLocal(Offset(1)) v0, v3
-                v3 = Const(Int(2))
                 v6 = WriteLocal(Offset(0)) v0, v3
-                v3 = Const(Int(2))
                 v8 = Print v3
                 v9 = Const(Nil)
                 v10 = Return v9
@@ -1772,7 +1769,6 @@ print a;",
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
                 v4 = WriteLocal(Offset(1)) v0, v3
-                v3 = Const(Int(2))
                 v6 = Print v3
                 v7 = Const(Nil)
                 v8 = Return v7
