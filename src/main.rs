@@ -406,7 +406,7 @@ impl Function {
             Opcode::Branch(_) => true,
             Opcode::CondBranch(..) => true,
             Opcode::Phi => false,
-            Opcode::PushFrame => false,
+            Opcode::NewFrame => false,
             Opcode::ReadLocal(_) => false,
             Opcode::WriteLocal(_) => true,
             Opcode::GuardInt => true,
@@ -510,7 +510,7 @@ enum Opcode {
     Branch(BlockId),
     CondBranch(BlockId, BlockId),
     Phi,
-    PushFrame,
+    NewFrame,
     NewClass(ClassDef),
     NewClosure(FunId),
     ReadLocal(Offset),
@@ -628,7 +628,7 @@ impl Parser<'_> {
 
     fn enter_fun(&mut self, fun: FunId) {
         let block = self.prog.funs[fun.0].entry;
-        let frame = self.prog.push_insn(fun, block, Opcode::PushFrame, vec![]);
+        let frame = self.prog.push_insn(fun, block, Opcode::NewFrame, vec![]);
         self.context_stack.push(Context { fun, block, frame });
         self.enter_block(block);
     }
@@ -1165,7 +1165,7 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Nil)
                 v3 = Return v2
@@ -1180,7 +1180,7 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
                 v3 = GuardInt v1
@@ -1203,7 +1203,7 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
                 v3 = Const(Int(3))
@@ -1226,7 +1226,7 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
                 v3 = GuardInt v1
@@ -1247,7 +1247,7 @@ mod parser_tests {
     Entry: fn0
     fn0: fun <toplevel> (entry bb0) {
       bb0 {
-        v0 = PushFrame
+        v0 = NewFrame
         v1 = Const(Int(1))
         v2 = Const(Int(2))
         v3 = GuardInt v1
@@ -1266,7 +1266,7 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
                 v3 = GuardInt v1
@@ -1289,7 +1289,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = ReadLocal(Offset(0)) v0
@@ -1311,7 +1311,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
@@ -1335,7 +1335,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
@@ -1364,7 +1364,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
@@ -1396,7 +1396,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClosure(fn1)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1405,7 +1405,7 @@ print a;
             }
             fn1: fun empty (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Nil)
                 v2 = Return v1
               }
@@ -1426,7 +1426,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
@@ -1446,7 +1446,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClosure(fn1)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1455,7 +1455,7 @@ print a;
             }
             fn1: fun empty (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Nil)
                 v2 = Return v1
               }
@@ -1469,7 +1469,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClosure(fn1)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1478,7 +1478,7 @@ print a;
             }
             fn1: fun f (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Param(0)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = ReadLocal(Offset(0)) v0
@@ -1494,7 +1494,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClosure(fn1)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1503,7 +1503,7 @@ print a;
             }
             fn1: fun inc (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Param(0)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = ReadLocal(Offset(0)) v0
@@ -1523,7 +1523,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClosure(fn1)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1532,7 +1532,7 @@ print a;
             }
             fn1: fun f (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Param(0)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Param(1)
@@ -1557,7 +1557,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClosure(fn1)
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = ReadLocal(Offset(0)) v0
@@ -1567,7 +1567,7 @@ print a;
             }
             fn1: fun f (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Nil)
                 v2 = Return v1
               }
@@ -1581,7 +1581,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClass(ClassDef { name: "C", methods: [] })
                 v2 = Const(Nil)
                 v3 = Return v2
@@ -1598,7 +1598,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClass(ClassDef { name: "C", methods: [fn1] })
                 v2 = Const(Nil)
                 v3 = Return v2
@@ -1606,7 +1606,7 @@ print a;
             }
             fn1: fun empty (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = This
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1625,7 +1625,7 @@ print a;
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = NewClass(ClassDef { name: "C", methods: [fn1, fn2] })
                 v2 = Const(Nil)
                 v3 = Return v2
@@ -1633,7 +1633,7 @@ print a;
             }
             fn1: fun empty0 (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = This
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1642,7 +1642,7 @@ print a;
             }
             fn2: fun empty1 (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = This
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Nil)
@@ -1712,7 +1712,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v4 = Print v1
@@ -1734,7 +1734,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
@@ -1759,7 +1759,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v4 = WriteLocal(Offset(0)) v0, v1
@@ -1782,7 +1782,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
@@ -1806,7 +1806,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
@@ -1833,7 +1833,7 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
-                v0 = PushFrame
+                v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = WriteLocal(Offset(0)) v0, v1
                 v3 = Const(Int(2))
