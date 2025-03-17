@@ -194,50 +194,32 @@ impl<'a> std::iter::Iterator for Lexer<'a> {
     }
 }
 
-#[derive(PartialEq, Copy, Eq, Hash, Clone, PartialOrd, Ord)]
-struct InsnId(usize);
-#[derive(PartialEq, Copy, Clone, Eq, Hash)]
-struct BlockId(usize);
-#[derive(PartialEq, Copy, Clone)]
-struct FunId(usize);
-#[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
-struct Offset(usize);
+macro_rules! define_id_type {
+    ($prefix:expr, $name:ident) => {
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub struct $name(usize);
 
-impl std::fmt::Display for InsnId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "v{}", self.0)
+        impl From<usize> for $name { fn from(id: usize) -> Self { $name(id) } }
+        impl From<$name> for usize { fn from(id: $name) -> Self { id.0 } }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+                write!(f, "{}{}", $prefix, self.0)
+            }
+        }
+
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+                write!(f, "{self}")
+            }
+        }
     }
 }
 
-impl std::fmt::Debug for InsnId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "v{}", self.0)
-    }
-}
-
-impl std::fmt::Display for BlockId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "bb{}", self.0)
-    }
-}
-
-impl std::fmt::Debug for BlockId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "bb{}", self.0)
-    }
-}
-
-impl std::fmt::Display for FunId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "fn{}", self.0)
-    }
-}
-
-impl std::fmt::Debug for FunId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "fn{}", self.0)
-    }
-}
+define_id_type!("v", InsnId);
+define_id_type!("bb", BlockId);
+define_id_type!("fn", FunId);
+define_id_type!("@", Offset);
 
 #[derive(Debug)]
 struct Block {
@@ -1291,8 +1273,8 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
-                v3 = ReadLocal(Offset(0)) v0
+                v2 = WriteLocal(@0) v0, v1
+                v3 = ReadLocal(@0) v0
                 v4 = Print v3
                 v5 = Const(Nil)
                 v6 = Return v5
@@ -1313,10 +1295,10 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(0)) v0, v3
-                v5 = ReadLocal(Offset(0)) v0
+                v4 = WriteLocal(@0) v0, v3
+                v5 = ReadLocal(@0) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1337,10 +1319,10 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(1)) v0, v3
-                v5 = ReadLocal(Offset(1)) v0
+                v4 = WriteLocal(@1) v0, v3
+                v5 = ReadLocal(@1) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1366,22 +1348,22 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
                 v4 = CondBranch(bb1, bb2) v3
               }
               bb2 {
                 v7 = Const(Int(4))
-                v8 = WriteLocal(Offset(0)) v0, v7
+                v8 = WriteLocal(@0) v0, v7
                 v9 = Branch(bb3)
               }
               bb1 {
                 v5 = Const(Int(3))
-                v6 = WriteLocal(Offset(0)) v0, v5
+                v6 = WriteLocal(@0) v0, v5
                 v10 = Branch(bb3)
               }
               bb3 {
-                v11 = ReadLocal(Offset(0)) v0
+                v11 = ReadLocal(@0) v0
                 v12 = Print v11
                 v13 = Const(Nil)
                 v14 = Return v13
@@ -1398,7 +1380,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1428,10 +1410,10 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(1)) v0, v3
-                v5 = ReadLocal(Offset(0)) v0
+                v4 = WriteLocal(@1) v0, v3
+                v5 = ReadLocal(@0) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1448,7 +1430,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1471,7 +1453,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1480,8 +1462,8 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Param(0)
-                v2 = WriteLocal(Offset(0)) v0, v1
-                v3 = ReadLocal(Offset(0)) v0
+                v2 = WriteLocal(@0) v0, v1
+                v3 = ReadLocal(@0) v0
                 v4 = Return v3
               }
             }
@@ -1496,7 +1478,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1505,8 +1487,8 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Param(0)
-                v2 = WriteLocal(Offset(0)) v0, v1
-                v3 = ReadLocal(Offset(0)) v0
+                v2 = WriteLocal(@0) v0, v1
+                v3 = ReadLocal(@0) v0
                 v4 = Const(Int(1))
                 v5 = GuardInt v3
                 v6 = GuardInt v4
@@ -1525,7 +1507,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1534,11 +1516,11 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Param(0)
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Param(1)
-                v4 = WriteLocal(Offset(1)) v0, v3
-                v5 = ReadLocal(Offset(0)) v0
-                v6 = ReadLocal(Offset(1)) v0
+                v4 = WriteLocal(@1) v0, v3
+                v5 = ReadLocal(@0) v0
+                v6 = ReadLocal(@1) v0
                 v7 = GuardInt v5
                 v8 = GuardInt v6
                 v9 = Add v7, v8
@@ -1559,8 +1541,8 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(Offset(0)) v0, v1
-                v3 = ReadLocal(Offset(0)) v0
+                v2 = WriteLocal(@0) v0, v1
+                v3 = ReadLocal(@0) v0
                 v4 = Const(Nil)
                 v5 = Return v4
               }
@@ -1608,7 +1590,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = This
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1635,7 +1617,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = This
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1644,7 +1626,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = This
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1714,7 +1696,7 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v4 = Print v1
                 v5 = Const(Nil)
                 v6 = Return v5
@@ -1736,11 +1718,11 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(0)) v0, v3
+                v4 = WriteLocal(@0) v0, v3
                 v5 = Const(Int(3))
-                v6 = WriteLocal(Offset(0)) v0, v5
+                v6 = WriteLocal(@0) v0, v5
                 v8 = Print v5
                 v9 = Const(Nil)
                 v10 = Return v9
@@ -1761,8 +1743,8 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
-                v4 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
+                v4 = WriteLocal(@0) v0, v1
                 v6 = Print v1
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1784,10 +1766,10 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(1)) v0, v3
-                v6 = WriteLocal(Offset(0)) v0, v3
+                v4 = WriteLocal(@1) v0, v3
+                v6 = WriteLocal(@0) v0, v3
                 v8 = Print v3
                 v9 = Const(Nil)
                 v10 = Return v9
@@ -1808,9 +1790,9 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(Offset(1)) v0, v3
+                v4 = WriteLocal(@1) v0, v3
                 v6 = Print v3
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1835,18 +1817,18 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(Offset(0)) v0, v1
+                v2 = WriteLocal(@0) v0, v1
                 v3 = Const(Int(2))
                 v4 = CondBranch(bb1, bb2) v3
               }
               bb2 {
                 v7 = Const(Int(4))
-                v8 = WriteLocal(Offset(0)) v0, v7
+                v8 = WriteLocal(@0) v0, v7
                 v9 = Branch(bb3)
               }
               bb1 {
                 v5 = Const(Int(3))
-                v6 = WriteLocal(Offset(0)) v0, v5
+                v6 = WriteLocal(@0) v0, v5
                 v10 = Branch(bb3)
               }
               bb3 {
