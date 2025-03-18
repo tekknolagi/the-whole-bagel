@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![allow(unused_mut)]
 use std::collections::{HashMap, BTreeMap};
 use std::collections::VecDeque;
 use bit_set::BitSet;
@@ -470,7 +469,7 @@ impl Function {
             }
         }
         // TODO(max): Hash-cons phi
-        for (insn_id, mut operands) in replacements {
+        for (insn_id, operands) in replacements {
             match operands.len() {
                 0 => panic!("Should have at least one value"),
                 1 => self.make_equal_to(insn_id, operands.get_single()),
@@ -1024,7 +1023,7 @@ impl Parser<'_> {
         self.push_insn(Opcode::Load(offset), smallvec![self.frame()])
     }
 
-    fn parse_function(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
+    fn parse_function(&mut self, env: &mut Env) -> Result<(), ParseError> {
         let name = self.expect_ident()?;
         let fun = self.prog.push_fun(name.clone());
         self.enter_fun(fun);
@@ -1083,7 +1082,7 @@ impl Parser<'_> {
         Ok(result)
     }
 
-    fn parse_expression(&mut self, mut env: &mut Env) -> Result<InsnId, ParseError> {
+    fn parse_expression(&mut self, env: &mut Env) -> Result<InsnId, ParseError> {
         self.parse_(env, 0)
     }
 
@@ -1269,7 +1268,7 @@ mod lexer_tests {
     use expect_test::{expect, Expect};
 
     fn check(source: &str, expect: Expect) {
-        let mut lexer = Lexer::from_str(source);
+        let lexer = Lexer::from_str(source);
         let actual: Vec<Token> = lexer.collect();
         expect.assert_eq(format!("{actual:?}").as_str());
     }
