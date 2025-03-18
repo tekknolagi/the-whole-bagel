@@ -738,7 +738,9 @@ impl Parser<'_> {
             methods.push(method);
         }
         self.expect(Token::RCurly)?;
-        self.push_insn(Opcode::NewClass(ClassDef { name, methods }), vec![]);
+        let class = self.push_insn(Opcode::NewClass(ClassDef { name: name.clone(), methods }), vec![]);
+        let offset = env.define(name);
+        self.write_local(offset, class);
         Ok(())
     }
 
@@ -1610,8 +1612,28 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClass(ClassDef { name: "C", methods: [] })
-                v2 = Const(Nil)
-                v3 = Return v2
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_print_class() {
+        check("class C { }
+        print C;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClass(ClassDef { name: "C", methods: [] })
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = Print v3
+                v5 = Const(Nil)
+                v6 = Return v5
               }
             }
         "#]])
@@ -1627,8 +1649,9 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClass(ClassDef { name: "C", methods: [fn1] })
-                v2 = Const(Nil)
-                v3 = Return v2
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
             fn1: fun empty (entry bb0) {
@@ -1654,8 +1677,9 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClass(ClassDef { name: "C", methods: [fn1, fn2] })
-                v2 = Const(Nil)
-                v3 = Return v2
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
               }
             }
             fn1: fun empty0 (entry bb0) {
