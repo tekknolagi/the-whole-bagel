@@ -573,9 +573,9 @@ impl<'a> std::fmt::Display for FunctionPrinter<'a> {
                 seen.insert(insn_id);
                 let Insn { opcode, operands } = &fun.insns[insn_id.0];
                 match opcode {
-                    Opcode::NewClass(ClassDef { name, .. }) => {
+                    Opcode::NewClass(ClassDef { name, superclass, .. }) => {
                         let class_name = self.program.interner.lookup(*name);
-                        write!(f, "    {insn_id} = NewClass({class_name})")
+                        write!(f, "    {insn_id} = NewClass({class_name}, {superclass})")
                     }
                     Opcode::LoadAttr(name) => {
                         let name = self.program.interner.lookup(*name);
@@ -607,11 +607,13 @@ enum Value {
     Float(f64),
     Bool(bool),
     Str(String),
+    ObjectClass,
 }
 
 #[derive(Debug)]
 struct ClassDef {
     name: NameId,
+    superclass: InsnId,
     methods: Vec<FunId>,
 }
 
@@ -844,9 +846,10 @@ impl Parser<'_> {
     fn parse_class(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
         self.expect(Token::Class)?;
         let name = self.expect_ident()?;
-        if let Some(Token::Less) = self.tokens.peek() {
-            todo!("inheritance");
-        }
+        let superclass = match self.tokens.peek() {
+            Some(Token::Less) => { self.tokens.next(); self.parse_ident(env)? }
+            _ => self.push_op(Opcode::Const(Value::ObjectClass)),
+        };
         self.expect(Token::LCurly)?;
         let mut methods = vec![];
         loop {
@@ -857,7 +860,7 @@ impl Parser<'_> {
             methods.push(method);
         }
         self.expect(Token::RCurly)?;
-        let class = self.push_op(Opcode::NewClass(ClassDef { name, methods }));
+        let class = self.push_op(Opcode::NewClass(ClassDef { name, superclass, methods }));
         let offset = env.define(name);
         self.write_local(offset, class);
         Ok(())
@@ -1078,6 +1081,14 @@ impl Parser<'_> {
 
     fn parse_expression(&mut self, env: &mut Env) -> Result<InsnId, ParseError> {
         self.parse_(env, 0)
+    }
+
+    fn parse_ident(&mut self, env: &Env) -> Result<InsnId, ParseError> {
+        let name = self.expect_ident()?;
+        match env.lookup(name) {
+            Some(offset) => Ok(self.read_local(offset)),
+            None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
+        }
     }
 
     fn lvalue_as_rvalue(&mut self, env: &Env, lvalue: LValue) -> Result<InsnId, ParseError> {
@@ -2320,10 +2331,11 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(C)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Const(Nil)
+                v5 = Return v4
               }
             }
         "#]])
@@ -2422,12 +2434,13 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(C)
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Print v3
-                v5 = Const(Nil)
-                v6 = Return v5
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Load(@0) v0
+                v5 = Print v4
+                v6 = Const(Nil)
+                v7 = Return v6
               }
             }
         "#]])
@@ -2442,10 +2455,11 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(C)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Const(Nil)
+                v5 = Return v4
               }
             }
             fn1: fun empty (entry bb0) {
@@ -2470,10 +2484,11 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(C)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Const(Nil)
+                v5 = Return v4
               }
             }
             fn1: fun empty0 (entry bb0) {
@@ -2498,6 +2513,27 @@ print a;
     }
 
     #[test]
+    fn test_class_inherit() {
+        check("class C {}
+        class D < C {}", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Load(@0) v0
+                v5 = NewClass(D, v4)
+                v6 = Store(@1) v0, v5
+                v7 = Const(Nil)
+                v8 = Return v7
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_call_class_no_args() {
         check("class C {}
             C();", expect![[r#"
@@ -2505,12 +2541,13 @@ print a;
                 fn0: fun <toplevel> (entry bb0) {
                   bb0 {
                     v0 = NewFrame
-                    v1 = NewClass(C)
-                    v2 = Store(@0) v0, v1
-                    v3 = Load(@0) v0
-                    v4 = Call(v3)
-                    v5 = Const(Nil)
-                    v6 = Return v5
+                    v1 = Const(ObjectClass)
+                    v2 = NewClass(C, v1)
+                    v3 = Store(@0) v0, v2
+                    v4 = Load(@0) v0
+                    v5 = Call(v4)
+                    v6 = Const(Nil)
+                    v7 = Return v6
                   }
                 }
             "#]])
@@ -2524,14 +2561,15 @@ print a;
                 fn0: fun <toplevel> (entry bb0) {
                   bb0 {
                     v0 = NewFrame
-                    v1 = NewClass(C)
-                    v2 = Store(@0) v0, v1
-                    v3 = Load(@0) v0
-                    v4 = Const(Int(1))
-                    v5 = Const(Int(2))
-                    v6 = Call(v3) v4, v5
-                    v7 = Const(Nil)
-                    v8 = Return v7
+                    v1 = Const(ObjectClass)
+                    v2 = NewClass(C, v1)
+                    v3 = Store(@0) v0, v2
+                    v4 = Load(@0) v0
+                    v5 = Const(Int(1))
+                    v6 = Const(Int(2))
+                    v7 = Call(v4) v5, v6
+                    v8 = Const(Nil)
+                    v9 = Return v8
                   }
                 }
             "#]])
