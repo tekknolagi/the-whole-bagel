@@ -1748,6 +1748,21 @@ print a;",
     }
 
     #[test]
+    fn test_block() {
+        check("{}",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Nil)
+                v2 = Return v1
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_if() {
         check("
 var a = 1;
