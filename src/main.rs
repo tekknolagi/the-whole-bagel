@@ -97,6 +97,7 @@ enum Token {
     Bang,
     BangEqual,
     Comma,
+    Dot,
     Or,
     And,
     Var,
@@ -149,6 +150,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some('\\') => { return Ok(Token::BackSlash); }
                 Some(',') => { return Ok(Token::Comma); }
+                Some('.') => { return Ok(Token::Dot); }
                 Some('!') => {
                     return Ok(match self.chars.peek() {
                         Some('=') => { self.chars.next(); Token::BangEqual }
@@ -1317,6 +1319,16 @@ mod lexer_tests {
     #[test]
     fn test_unterminated_string_lit() {
         check_error("\"abc", expect!["UnterminatedStringLiteral"])
+    }
+
+    #[test]
+    fn test_comma() {
+        check(",", expect!["[Comma]"])
+    }
+
+    #[test]
+    fn test_dot() {
+        check(".", expect!["[Dot]"])
     }
 }
 
