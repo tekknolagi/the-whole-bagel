@@ -758,6 +758,7 @@ enum ParseError {
     UnboundName(&'static str),
     VariableShadows(&'static str),
     CannotAssignTo(LValue),
+    CannotAssignToThis,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1097,6 +1098,9 @@ impl Parser<'_> {
     }
 
     fn store_local(&mut self, env: &Env, name: NameId, value: InsnId) -> Result<InsnId, ParseError> {
+        if name == self.prog.intern("this") {
+            return Err(ParseError::CannotAssignToThis);
+        }
         match env.lookup(name) {
             Some(offset) => { self.write_local(offset, value); Ok(value) }
             None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
@@ -1648,7 +1652,11 @@ print a;",
 
     #[test]
     fn test_assign_non_lvalue() {
-        check_error("1 = 2;", expect!["Err(CannotAssignTo(Insn(v1)))"])
+        check_error("1 = 2;", expect!["Err(CannotAssignTo(Insn(v1)))"]);
+        check_error("var a = 1; (a) = 2;", expect!["Err(CannotAssignTo(Insn(v3)))"]);
+        check_error("var a = 1; (a+a) = 2;", expect!["Err(CannotAssignTo(Insn(v7)))"]);
+        check_error("class Foo { Foo() { this = 1; } }", expect!["Err(CannotAssignToThis)"]);
+        check_error("undefined = 1;", expect![[r#"Err(UnboundName("undefined"))"#]]);
     }
 
     #[test]
