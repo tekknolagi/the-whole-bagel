@@ -743,8 +743,7 @@ struct Parser<'a> {
 #[derive(Debug, PartialEq)]
 enum ParseError {
     UnexpectedToken(Token),
-    UnexpectedError,
-    UnexpectedEOF,
+    UnexpectedEof,
     UnboundName(String),
     VariableShadows(String),
 }
@@ -795,7 +794,7 @@ impl Parser<'_> {
 
     fn expect(&mut self, expected: Token) -> Result<(), ParseError> {
         match self.tokens.next() {
-            None => Err(ParseError::UnexpectedError),
+            None => Err(ParseError::UnexpectedEof),
             Some(actual) if expected == actual => Ok(()),
             Some(actual) => Err(ParseError::UnexpectedToken(actual)),
         }
@@ -804,7 +803,7 @@ impl Parser<'_> {
     fn expect_ident(&mut self) -> Result<NameId, ParseError> {
         match self.tokens.next() {
             Some(Token::Ident(name)) => Ok(self.prog.intern(name)),
-            None => Err(ParseError::UnexpectedError),
+            None => Err(ParseError::UnexpectedEof),
             Some(actual) => Err(ParseError::UnexpectedToken(actual)),
         }
     }
@@ -978,7 +977,7 @@ impl Parser<'_> {
                 return self.expect(Token::RCurly);  // no semicolon
             }
             Some(token) => { self.parse_expression(&mut env)?; Ok(()) },
-            None => { Err(ParseError::UnexpectedError) }
+            None => { Err(ParseError::UnexpectedEof) }
         }?;
         self.expect(Token::Semicolon)
     }
@@ -1045,7 +1044,7 @@ impl Parser<'_> {
             match self.tokens.peek() {
                 Some(Token::RParen) => break,
                 Some(Token::Comma) => return Err(ParseError::UnexpectedToken(Token::Comma)),
-                None => return Err(ParseError::UnexpectedEOF),
+                None => return Err(ParseError::UnexpectedEof),
                 _ => result.push(self.parse_expression(&mut env)?),
             }
             match self.tokens.peek() {
@@ -1062,7 +1061,7 @@ impl Parser<'_> {
 
     fn parse_(&mut self, mut env: &mut Env, prec: u32) -> Result<InsnId, ParseError> {
         let mut lhs = match self.tokens.peek() {
-            None => Err(ParseError::UnexpectedError),
+            None => Err(ParseError::UnexpectedEof),
             Some(Token::Nil) => {
                 self.tokens.next();
                 Ok(self.push_insn(Opcode::Const(Value::Nil), vec![]))
