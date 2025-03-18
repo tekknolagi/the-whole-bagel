@@ -759,6 +759,7 @@ enum ParseError {
     VariableShadows(&'static str),
     CannotAssignTo(LValue),
     CannotAssignToThis,
+    CannotInheritSelf(&'static str),
 }
 
 #[derive(Debug, PartialEq)]
@@ -852,8 +853,11 @@ impl Parser<'_> {
         let superclass = match self.tokens.peek() {
             Some(Token::Less) => {
                 self.tokens.next();
-                let name = self.expect_ident()?;
-                let value = self.load_local(env, name)?;
+                let superclass_name = self.expect_ident()?;
+                if name == superclass_name {
+                    return Err(ParseError::CannotInheritSelf(self.prog.interner.lookup(name)));
+                }
+                let value = self.load_local(env, superclass_name)?;
                 self.push_insn(Opcode::GuardClass, smallvec![value])
             }
             _ => self.push_op(Opcode::Const(Value::ObjectClass)),
@@ -1434,6 +1438,42 @@ mod parser_tests {
             }
         "#]])
     }
+
+    #[test]
+    fn test_equal_equal() {
+        check("1==2;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Const(Int(2))
+                v3 = Equal v1, v2
+                v4 = Const(Nil)
+                v5 = Return v4
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_bang_equal() {
+        check("1!=2;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Const(Int(2))
+                v3 = NotEqual v1, v2
+                v4 = Const(Nil)
+                v5 = Return v4
+              }
+            }
+        "#]])
+    }
+
+    // TODO(max): Add tests for prefix not (!)
 
     #[test]
     fn mul_add() {
@@ -2590,6 +2630,13 @@ print a;
             }
         "#]])
     }
+
+    #[test]
+    fn test_class_inherit_self() {
+        check_error("class C < C {}", expect![[r#"Err(CannotInheritSelf("C"))"#]])
+    }
+
+    // TODO(max): Test referencing class from within method body
 
     #[test]
     fn test_call_class_no_args() {
