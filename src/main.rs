@@ -2497,6 +2497,46 @@ print a;
         "#]])
     }
 
+    #[test]
+    fn test_call_class_no_args() {
+        check("class C {}
+            C();", expect![[r#"
+                Entry: fn0
+                fn0: fun <toplevel> (entry bb0) {
+                  bb0 {
+                    v0 = NewFrame
+                    v1 = NewClass(C)
+                    v2 = Store(@0) v0, v1
+                    v3 = Load(@0) v0
+                    v4 = Call(v3)
+                    v5 = Const(Nil)
+                    v6 = Return v5
+                  }
+                }
+            "#]])
+    }
+
+    #[test]
+    fn test_call_class_args() {
+        check("class C {}
+            C(1, 2);", expect![[r#"
+                Entry: fn0
+                fn0: fun <toplevel> (entry bb0) {
+                  bb0 {
+                    v0 = NewFrame
+                    v1 = NewClass(C)
+                    v2 = Store(@0) v0, v1
+                    v3 = Load(@0) v0
+                    v4 = Const(Int(1))
+                    v5 = Const(Int(2))
+                    v6 = Call(v3) v4, v5
+                    v7 = Const(Nil)
+                    v8 = Return v7
+                  }
+                }
+            "#]])
+    }
+
     // #[test]
     // fn test_read_global() {
     //     check("var a = 1; fun empty() { return a; }", expect![[r#"
