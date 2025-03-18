@@ -45,7 +45,7 @@ impl Interner {
         id
     }
 
-    pub fn lookup(&self, id: NameId) -> &str {
+    pub fn lookup(&self, id: NameId) -> &'static str {
         self.vec[id.0]
     }
 
@@ -506,6 +506,8 @@ impl Function {
             Opcode::NewFrame => false,
             Opcode::Load(_) => false,
             Opcode::Store(_) => true,
+            Opcode::LoadAttr(_) => true,
+            Opcode::StoreAttr(_) => true,
             Opcode::GuardInt => true,
             Opcode::NewClass(_) => false,
             Opcode::This => false,
@@ -578,6 +580,14 @@ impl<'a> std::fmt::Display for FunctionPrinter<'a> {
                         let class_name = self.program.interner.lookup(*name);
                         write!(f, "    {insn_id} = NewClass({class_name})")
                     }
+                    Opcode::LoadAttr(name) => {
+                        let name = self.program.interner.lookup(*name);
+                        write!(f, "    {insn_id} = LoadAttr({name})")
+                    }
+                    Opcode::StoreAttr(name) => {
+                        let name = self.program.interner.lookup(*name);
+                        write!(f, "    {insn_id} = StoreAttr({name})")
+                    }
                     _ => write!(f, "    {insn_id} = {:?}", opcode),
                 }?;
                 let mut sep = "";
@@ -633,6 +643,8 @@ enum Opcode {
     NewClosure(FunId),
     Load(Offset),
     Store(Offset),
+    LoadAttr(NameId),
+    StoreAttr(NameId),
     GuardInt,
     This,
     Call(InsnId),
@@ -749,8 +761,16 @@ struct Parser<'a> {
 enum ParseError {
     UnexpectedToken(Token),
     UnexpectedEof,
-    UnboundName(String),
-    VariableShadows(String),
+    UnboundName(&'static str),
+    VariableShadows(&'static str),
+    AssignToNonLValue,
+}
+
+#[derive(Debug)]
+enum LValue {
+    Insn(InsnId),
+    Name(NameId),
+    Attr(InsnId, NameId),
 }
 
 impl Parser<'_> {
@@ -1068,96 +1088,122 @@ impl Parser<'_> {
         self.parse_(env, 0)
     }
 
+    fn lvalue_as_rvalue(&mut self, env: &Env, lvalue: LValue) -> Result<InsnId, ParseError> {
+        match lvalue {
+            LValue::Insn(insn_id) => Ok(insn_id),
+            LValue::Name(name) => {
+                match env.lookup(name) {
+                    Some(offset) => Ok(self.read_local(offset)),
+                    None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
+                }
+            }
+            LValue::Attr(obj, name) => Ok(self.push_insn(Opcode::LoadAttr(name), smallvec![obj]))
+        }
+    }
+
     fn parse_(&mut self, mut env: &mut Env, prec: u32) -> Result<InsnId, ParseError> {
         let mut lhs = match self.tokens.peek() {
-            None => Err(ParseError::UnexpectedEof),
+            None => return Err(ParseError::UnexpectedEof),
             Some(Token::Nil) => {
                 self.tokens.next();
-                Ok(self.push_op(Opcode::Const(Value::Nil)))
+                LValue::Insn(self.push_op(Opcode::Const(Value::Nil)))
             }
             Some(Token::Bool(value)) => {
                 let value = value.clone();
                 self.tokens.next();
-                Ok(self.push_op(Opcode::Const(Value::Bool(value))))
+                LValue::Insn(self.push_op(Opcode::Const(Value::Bool(value))))
             }
             Some(Token::Int(value)) => {
                 let value = value.clone();
                 self.tokens.next();
-                Ok(self.push_op(Opcode::Const(Value::Int(value))))
+                LValue::Insn(self.push_op(Opcode::Const(Value::Int(value))))
             }
             Some(Token::Str(value)) => {
                 let value = value.clone();
                 self.tokens.next();
-                Ok(self.push_op(Opcode::Const(Value::Str(value))))
+                LValue::Insn(self.push_op(Opcode::Const(Value::Str(value))))
             }
             Some(Token::Ident(name)) => {
-                let name_str = name.clone();
-                let name = self.prog.intern_str(name);
+                let result = LValue::Name(self.prog.intern_str(name));
                 self.tokens.next();
-                if self.tokens.peek() == Some(&Token::Equal) {
-                    // Assignment
-                    self.tokens.next();
-                    // TODO(max): Operator precedence ...?
-                    let value = self.parse_expression(&mut env)?;
-                    match env.lookup(name) {
-                        Some(offset) => {
-                            self.write_local(offset, value);
-                            Ok(value)
-                        }
-                        None => Err(ParseError::UnboundName(name_str)),
-                    }
-                } else {
-                    match env.lookup(name) {
-                        Some(offset) => Ok(self.read_local(offset)),
-                        None => Err(ParseError::UnboundName(name_str)),
-                    }
-                }
+                result
             }
             Some(Token::LParen) => {
                 self.tokens.next();
                 let result = self.parse_(&mut env, 0)?;
                 self.expect(Token::RParen)?;
-                Ok(result)
+                LValue::Insn(result)
             }
-            Some(token) => Err(ParseError::UnexpectedToken(token.clone())),
-        }?;
+            Some(token) => return Err(ParseError::UnexpectedToken(token.clone())),
+        };
         while let Some(token) = self.tokens.peek() {
             let (assoc, op_prec) = match token {
-                Token::And => (Assoc::Left, 0),
-                Token::Or => (Assoc::Left, 0),
-                Token::EqualEqual => (Assoc::Left, 1),
-                Token::BangEqual => (Assoc::Left, 1),
-                Token::Greater => (Assoc::Left, 2),
-                Token::GreaterEqual => (Assoc::Left, 2),
-                Token::Less => (Assoc::Left, 2),
-                Token::LessEqual => (Assoc::Left, 2),
-                Token::Plus => (Assoc::Any, 3),
-                Token::Minus => (Assoc::Left, 3),
-                Token::Star => (Assoc::Any, 4),
-                Token::ForwardSlash => (Assoc::Left, 4),
-                Token::LParen => (Assoc::Any, 5),
+                // TODO(max): Check associativity of =
+                Token::Equal => (Assoc::Left, 0),
+                Token::And => (Assoc::Left, 1),
+                Token::Or => (Assoc::Left, 1),
+                Token::EqualEqual => (Assoc::Left, 2),
+                Token::BangEqual => (Assoc::Left, 2),
+                Token::Greater => (Assoc::Left, 3),
+                Token::GreaterEqual => (Assoc::Left, 3),
+                Token::Less => (Assoc::Left, 3),
+                Token::LessEqual => (Assoc::Left, 3),
+                Token::Plus => (Assoc::Any, 4),
+                Token::Minus => (Assoc::Left, 4),
+                Token::Star => (Assoc::Any, 5),
+                Token::ForwardSlash => (Assoc::Left, 5),
+                Token::LParen => (Assoc::Any, 6),
+                // TODO(max): Check associativity of .
+                Token::Dot => (Assoc::Left, 7),
                 _ => break,
             };
             let token = token.clone();
-            if op_prec < prec { return Ok(lhs); }
+            if op_prec < prec { return self.lvalue_as_rvalue(env, lhs); }
             self.tokens.next();
             let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
+            if token == Token::Equal {
+                lhs = match lhs {
+                    LValue::Insn(..) => return Err(ParseError::AssignToNonLValue),
+                    LValue::Name(name) => {
+                        let rhs = self.parse_(&mut env, next_prec)?;
+                        match env.lookup(name) {
+                            Some(offset) => {
+                                self.write_local(offset, rhs);
+                                LValue::Insn(rhs)
+                            }
+                            None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
+                        }
+                    }
+                    LValue::Attr(obj, name) => {
+                        let rhs = self.parse_(&mut env, next_prec)?;
+                        self.push_insn(Opcode::StoreAttr(name), smallvec![obj, rhs]);
+                        LValue::Insn(rhs)
+                    }
+                };
+                continue;
+            } else if token == Token::Dot {
+                let name = self.expect_ident()?;
+                let obj = self.lvalue_as_rvalue(env, lhs)?;
+                lhs = LValue::Attr(obj, name);
+                continue;
+            }
+            let mut lhs_value = self.lvalue_as_rvalue(env, lhs)?;
             if token == Token::And {
                 todo!("ssa from `and' keyword")
             } else if token == Token::Or {
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
-                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![lhs.clone()]);
+                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![lhs_value.clone()]);
                 self.enter_block(iffalse_block);
                 let rhs = self.parse_(&mut env, next_prec)?;
                 self.push_op(Opcode::Branch(iftrue_block));
                 self.enter_block(iftrue_block);
-                lhs = self.push_insn(Opcode::Phi, smallvec![lhs, rhs])
+                lhs = LValue::Insn(self.push_insn(Opcode::Phi, smallvec![lhs_value, rhs]))
             } else if token == Token::LParen {
                 // Function call
                 let operands = self.parse_args(&mut env)?;
                 self.expect(Token::RParen)?;
-                lhs = self.push_insn(Opcode::Call(lhs), operands)
+                lhs = LValue::Insn(self.push_insn(Opcode::Call(lhs_value), operands))
             } else {
                 let opcode = match token {
                     Token::EqualEqual => Opcode::Equal,
@@ -1174,13 +1220,13 @@ impl Parser<'_> {
                 };
                 let mut rhs = self.parse_(&mut env, next_prec)?;
                 if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
-                    lhs = self.push_insn(Opcode::GuardInt, smallvec![lhs]);
+                    lhs_value = self.push_insn(Opcode::GuardInt, smallvec![lhs_value]);
                     rhs = self.push_insn(Opcode::GuardInt, smallvec![rhs]);
                 }
-                lhs = self.push_insn(opcode, smallvec![lhs, rhs]);
+                lhs = LValue::Insn(self.push_insn(opcode, smallvec![lhs_value, rhs]));
             }
         }
-        Ok(lhs)
+        self.lvalue_as_rvalue(env, lhs)
     }
 }
 
@@ -2088,6 +2134,59 @@ print a;
     }
 
     #[test]
+    fn test_load_attr() {
+        check("fun f(a) { return a.b; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Param(0)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = LoadAttr(b) v3
+                v5 = Return v4
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_load_attr_nested() {
+        check("fun f(a) { return a.b.c; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Param(0)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = LoadAttr(b) v3
+                v5 = LoadAttr(c) v4
+                v6 = Return v5
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
     fn test_class() {
         check("class C { }", expect![[r#"
             Entry: fn0
@@ -2101,6 +2200,63 @@ print a;
               }
             }
         "#]])
+    }
+
+    #[test]
+    fn test_store_attr() {
+        check("fun f(a) { a.b = 1; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Param(0)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = Const(Int(1))
+                v5 = StoreAttr(b) v3, v4
+                v6 = Const(Nil)
+                v7 = Return v6
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_store_attr_nested() {
+        check("fun f(a) { a.b.c = 1; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Param(0)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = LoadAttr(b) v3
+                v5 = Const(Int(1))
+                v6 = StoreAttr(c) v4, v5
+                v7 = Const(Nil)
+                v8 = Return v7
+              }
+            }
+        "#]]);
     }
 
     #[test]
