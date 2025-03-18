@@ -1563,6 +1563,11 @@ print a;",
     }
 
     #[test]
+    fn test_assign_non_lvalue() {
+        check_error("1 = 2;", expect!["Err(AssignToNonLValue)"])
+    }
+
+    #[test]
     fn test_var_assign() {
         check("
 var a = 1;
@@ -2161,6 +2166,11 @@ print a;
               }
             }
         "#]]);
+    }
+
+    #[test]
+    fn test_load_non_attr() {
+        check_error("fun f(a) { return a.1; }", expect!["Err(UnexpectedToken(Int(1)))"])
     }
 
     #[test]
