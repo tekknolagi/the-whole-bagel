@@ -7,6 +7,69 @@ use bit_set::BitSet;
 
 // TODO(max): Set up better testing infrastructure for parse errors
 
+
+// ===== Begin matklad string interning =====
+
+#[derive(Default)]
+pub struct Interner {
+    map: HashMap<&'static str, NameId>,
+    vec: Vec<&'static str>,
+    buf: String,
+    full: Vec<String>,
+}
+
+impl Interner {
+    pub fn with_capacity(cap: usize) -> Interner {
+        let cap = cap.next_power_of_two();
+        Interner {
+            map: HashMap::default(),
+            vec: Vec::new(),
+            buf: String::with_capacity(cap),
+            full: Vec::new(),
+        }
+    }
+
+    pub fn intern(&mut self, name: &str) -> NameId {
+        if let Some(&id) = self.map.get(name) {
+            return id;
+        }
+        let name = unsafe { self.alloc(name) };
+        let id = NameId(self.map.len());
+        self.map.insert(name, id);
+        self.vec.push(name);
+
+        debug_assert!(self.lookup(id) == name);
+        debug_assert!(self.intern(name) == id);
+
+        id
+    }
+
+    pub fn lookup(&self, id: NameId) -> &str {
+        self.vec[id.0]
+    }
+
+    unsafe fn alloc(&mut self, name: &str) -> &'static str {
+        let cap = self.buf.capacity();
+        if cap < self.buf.len() + name.len() {
+            let new_cap = (cap.max(name.len()) + 1)
+                .next_power_of_two();
+            let new_buf = String::with_capacity(new_cap);
+            let old_buf = std::mem::replace(&mut self.buf, new_buf);
+            self.full.push(old_buf);
+        }
+
+        let interned = {
+            let start = self.buf.len();
+            self.buf.push_str(name);
+            &self.buf[start..]
+        };
+
+        &*(interned as *const str)
+    }
+}
+
+// ===== End matklad string interning =====
+
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
 }
@@ -261,6 +324,7 @@ impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T> {
     }
 }
 
+define_id_type!(":", NameId);
 define_id_type!("v", InsnId);
 define_id_type!("bb", BlockId);
 define_id_type!("fn", FunId);
@@ -282,7 +346,7 @@ impl Block {
 
 #[derive(Debug)]
 struct Function {
-    name: String,
+    name: NameId,
     entry: BlockId,
     insns: Vec<Insn>,
     union_find: Vec<Option<InsnId>>,
@@ -291,7 +355,7 @@ struct Function {
 }
 
 impl Function {
-    fn new(name: String) -> Function {
+    fn new(name: NameId) -> Function {
         Function { name, entry: BlockId(0), insns: vec![], union_find: vec![], blocks: vec![Block::new()], num_locals: 0 }
     }
 
@@ -480,21 +544,41 @@ impl Function {
     }
 }
 
-impl std::fmt::Display for Function {
+struct FunctionPrinter<'a> {
+    program: &'a Program,
+    function: &'a Function,
+}
+
+impl<'a> FunctionPrinter<'a> {
+    fn new(program: &'a Program, function: &'a Function) -> Self {
+        Self { program, function }
+    }
+}
+
+impl<'a> std::fmt::Display for FunctionPrinter<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        writeln!(f, "fun {} (entry {}) {{", self.name, self.entry)?;
+        let fun = self.function;
+        let fun_name = self.program.interner.lookup(fun.name);
+        let fun_entry = fun.entry;
+        writeln!(f, "fun {fun_name} (entry {fun_entry}) {{")?;
         let mut seen = InsnSet::new();
-        for block_id in self.rpo() {
+        for block_id in fun.rpo() {
             writeln!(f, "  {block_id} {{")?;
-            for insn_id in &self.blocks[block_id.0].insns {
-                let insn_id = self.find(*insn_id);
+            for insn_id in &fun.blocks[block_id.0].insns {
+                let insn_id = fun.find(*insn_id);
                 if seen.contains(insn_id) { continue; }
                 seen.insert(insn_id);
-                let Insn { opcode, operands } = &self.insns[insn_id.0];
-                write!(f, "    {insn_id} = {:?}", opcode)?;
+                let Insn { opcode, operands } = &fun.insns[insn_id.0];
+                match opcode {
+                    Opcode::NewClass(ClassDef { name, .. }) => {
+                        let class_name = self.program.interner.lookup(*name);
+                        write!(f, "    {insn_id} = NewClass({class_name})")
+                    }
+                    _ => write!(f, "    {insn_id} = {:?}", opcode),
+                }?;
                 let mut sep = "";
                 for operand in operands {
-                    write!(f, "{sep} {:?}", self.find(*operand))?;
+                    write!(f, "{sep} {:?}", fun.find(*operand))?;
                     sep = ",";
                 }
                 write!(f, "\n")?;
@@ -516,7 +600,7 @@ enum Value {
 
 #[derive(Debug)]
 struct ClassDef {
-    name: String,
+    name: NameId,
     methods: Vec<FunId>,
 }
 
@@ -557,10 +641,10 @@ struct Insn {
     operands: Vec<InsnId>,
 }
 
-#[derive(Debug)]
 struct Program {
     entry: FunId,
     funs: Vec<Function>,
+    interner: Interner,
 }
 
 #[derive(PartialEq)]
@@ -572,11 +656,21 @@ enum Assoc {
 
 impl Program {
     fn new() -> Program {
-        let main = Function::new("<toplevel>".into());
-        Program { entry: FunId(0), funs: vec![main] }
+        let mut result = Program { entry: FunId(0), funs: vec![Function::new(NameId(0))], interner: Default::default() };
+        let name = result.intern_str("<toplevel>");
+        result.funs[0].name = name;
+        result
     }
 
-    fn push_fun(&mut self, name: String) -> FunId {
+    fn intern(&mut self, name: String) -> NameId {
+        self.interner.intern(&name)
+    }
+
+    fn intern_str(&mut self, name: &str) -> NameId {
+        self.interner.intern(name)
+    }
+
+    fn push_fun(&mut self, name: NameId) -> FunId {
         let fun = FunId(self.funs.len());
         self.funs.push(Function::new(name));
         fun
@@ -595,7 +689,8 @@ impl std::fmt::Display for Program {
         writeln!(f, "Entry: {}", self.entry)?;
         for (idx, fun) in self.funs.iter().enumerate() {
             let fun_id = FunId(idx);
-            write!(f, "{fun_id}: {fun}")?;
+            let printer = FunctionPrinter::new(self, fun);
+            write!(f, "{fun_id}: {printer}")?;
         }
         Ok(())
     }
@@ -604,7 +699,7 @@ impl std::fmt::Display for Program {
 #[derive(Clone)]
 struct Env<'a> {
     fun: FunId,
-    bindings: HashMap<String, Offset>,
+    bindings: HashMap<NameId, Offset>,
     parent: Option<&'a Env<'a>>,
 }
 
@@ -617,15 +712,15 @@ impl<'a> Env<'a> {
         Env { fun, bindings: HashMap::new(), parent: Some(parent) }
     }
 
-    fn lookup(&self, name: &String) -> Option<Offset> {
-        self.bindings.get(name).copied()
+    fn lookup(&self, name: NameId) -> Option<Offset> {
+        self.bindings.get(&name).copied()
     }
 
-    fn is_defined(&self, name: &String) -> bool {
-        return self.bindings.get(name).is_some();
+    fn is_defined(&self, name: NameId) -> bool {
+        return self.bindings.get(&name).is_some();
     }
 
-    fn define(&mut self, name: String) -> Offset {
+    fn define(&mut self, name: NameId) -> Offset {
         let offset = Offset(self.bindings.len());
         self.bindings.insert(name.clone(), offset);
         offset
@@ -705,9 +800,9 @@ impl Parser<'_> {
         }
     }
 
-    fn expect_ident(&mut self) -> Result<String, ParseError> {
+    fn expect_ident(&mut self) -> Result<NameId, ParseError> {
         match self.tokens.next() {
-            Some(Token::Ident(name)) => Ok(name.clone()),
+            Some(Token::Ident(name)) => Ok(self.prog.intern(name)),
             None => Err(ParseError::UnexpectedError),
             Some(actual) => Err(ParseError::UnexpectedToken(actual)),
         }
@@ -743,7 +838,7 @@ impl Parser<'_> {
             methods.push(method);
         }
         self.expect(Token::RCurly)?;
-        let class = self.push_insn(Opcode::NewClass(ClassDef { name: name.clone(), methods }), vec![]);
+        let class = self.push_insn(Opcode::NewClass(ClassDef { name, methods }), vec![]);
         let offset = env.define(name);
         self.write_local(offset, class);
         Ok(())
@@ -758,13 +853,14 @@ impl Parser<'_> {
         // TODO(max): We need a way to find out if a variable is from an outer context (global,
         // closure) when using it so we don't bake in the value at compile-time.
         let mut func_env = Env::from_parent(fun, &env);
-        let offset = func_env.define("this".into());
+        let this_name = self.prog.intern_str("this");
+        let offset = func_env.define(this_name);
         let this = self.push_insn(Opcode::This, vec![]);
         self.write_local(offset, this);
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
-                    let name = name.clone();
+                    let name = self.prog.intern_str(name);
                     let param = self.push_insn(Opcode::Param(idx), vec![]);
                     let offset = func_env.define(name);
                     self.write_local(offset, param);
@@ -912,7 +1008,7 @@ impl Parser<'_> {
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
-                    let name = name.clone();
+                    let name = self.prog.intern_str(name);
                     let param = self.push_insn(Opcode::Param(idx), vec![]);
                     let offset = func_env.define(name);
                     self.write_local(offset, param);
@@ -986,24 +1082,25 @@ impl Parser<'_> {
                 Ok(self.push_insn(Opcode::Const(Value::Str(value)), vec![]))
             }
             Some(Token::Ident(name)) => {
-                let name = name.clone();
+                let name_str = name.clone();
+                let name = self.prog.intern_str(name);
                 self.tokens.next();
                 if self.tokens.peek() == Some(&Token::Equal) {
                     // Assignment
                     self.tokens.next();
                     // TODO(max): Operator precedence ...?
                     let value = self.parse_expression(&mut env)?;
-                    match env.lookup(&name) {
+                    match env.lookup(name) {
                         Some(offset) => {
                             self.write_local(offset, value);
                             Ok(value)
                         }
-                        None => Err(ParseError::UnboundName(name)),
+                        None => Err(ParseError::UnboundName(name_str)),
                     }
                 } else {
-                    match env.lookup(&name) {
+                    match env.lookup(name) {
                         Some(offset) => Ok(self.read_local(offset)),
-                        None => Err(ParseError::UnboundName(name)),
+                        None => Err(ParseError::UnboundName(name_str)),
                     }
                 }
             }
@@ -1875,7 +1972,7 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(ClassDef { name: "C", methods: [] })
+                v1 = NewClass(C)
                 v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
@@ -1892,7 +1989,7 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(ClassDef { name: "C", methods: [] })
+                v1 = NewClass(C)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Print v3
@@ -1912,7 +2009,7 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(ClassDef { name: "C", methods: [fn1] })
+                v1 = NewClass(C)
                 v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
@@ -1940,7 +2037,7 @@ print a;
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = NewClass(ClassDef { name: "C", methods: [fn1, fn2] })
+                v1 = NewClass(C)
                 v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
