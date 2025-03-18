@@ -2317,6 +2317,34 @@ print a;
     }
 
     #[test]
+    fn test_call_method() {
+        check("fun f(a) { a.b(); }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Param(0)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = LoadAttr(b) v3
+                v5 = Call(v4)
+                v6 = Const(Nil)
+                v7 = Return v6
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_print_class() {
         check("class C { }
         print C;", expect![[r#"
