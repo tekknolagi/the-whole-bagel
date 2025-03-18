@@ -1220,6 +1220,7 @@ impl Parser<'_> {
                 };
                 let mut rhs = self.parse_(&mut env, next_prec)?;
                 if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
+                    // TODO(max): Don't guard; string+string is valid too
                     lhs_value = self.push_insn(Opcode::GuardInt, smallvec![lhs_value]);
                     rhs = self.push_insn(Opcode::GuardInt, smallvec![rhs]);
                 }
