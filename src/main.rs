@@ -1112,39 +1112,29 @@ impl Parser<'_> {
     }
 
     fn parse_(&mut self, mut env: &mut Env, prec: u32) -> Result<InsnId, ParseError> {
-        let mut lhs = match self.tokens.peek() {
+        let mut lhs = match self.tokens.next() {
             None => return Err(ParseError::UnexpectedEof),
             Some(Token::Nil) => {
-                self.tokens.next();
                 LValue::Insn(self.push_op(Opcode::Const(Value::Nil)))
             }
             Some(Token::Bool(value)) => {
-                let value = value.clone();
-                self.tokens.next();
                 LValue::Insn(self.push_op(Opcode::Const(Value::Bool(value))))
             }
             Some(Token::Int(value)) => {
-                let value = value.clone();
-                self.tokens.next();
                 LValue::Insn(self.push_op(Opcode::Const(Value::Int(value))))
             }
             Some(Token::Str(value)) => {
-                let value = value.clone();
-                self.tokens.next();
                 LValue::Insn(self.push_op(Opcode::Const(Value::Str(value))))
             }
             Some(Token::Ident(name)) => {
-                let result = LValue::Name(self.prog.intern(name));
-                self.tokens.next();
-                result
+                LValue::Name(self.prog.intern(&name))
             }
             Some(Token::LParen) => {
-                self.tokens.next();
                 let result = self.parse_(&mut env, 0)?;
                 self.expect(Token::RParen)?;
                 LValue::Insn(result)
             }
-            Some(token) => return Err(ParseError::UnexpectedToken(token.clone())),
+            Some(token) => return Err(ParseError::UnexpectedToken(token)),
         };
         while let Some(token) = self.tokens.peek() {
             let (assoc, op_prec) = match token {
