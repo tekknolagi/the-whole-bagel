@@ -847,6 +847,24 @@ impl Parser<'_> {
                 }
                 return Ok(());  // no semicolon
             }
+            Some(Token::While) => {
+                self.tokens.next();
+                self.expect(Token::LParen)?;
+                let header_block = self.new_block();
+                self.push_insn(Opcode::Branch(header_block), vec![]);
+                self.enter_block(header_block);
+                let cond = self.parse_expression(&mut env)?;
+                self.expect(Token::RParen)?;
+                let body_block = self.new_block();
+                let after_block = self.new_block();
+                self.push_insn(Opcode::CondBranch(body_block, after_block), vec![cond]);
+                self.enter_block(body_block);
+                let mut body_env = env.clone();
+                self.parse_statement(&mut body_env)?;
+                self.push_insn(Opcode::Branch(header_block), vec![]);
+                self.enter_block(after_block);
+                return Ok(());  // no semicolon
+            }
             Some(Token::LCurly) => {
                 // New scope
                 let mut block_env = env.clone();
@@ -1420,6 +1438,134 @@ print a;
     }
 
     #[test]
+    fn test_empty_while() {
+        check("while (true) {}",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Branch(bb1)
+              }
+              bb1 {
+                v2 = Const(Bool(true))
+                v3 = CondBranch(bb2, bb3) v2
+              }
+              bb3 {
+                v5 = Const(Nil)
+                v6 = Return v5
+              }
+              bb2 {
+                v4 = Branch(bb1)
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_while_print() {
+        check("while (true) { print 1; }",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Branch(bb1)
+              }
+              bb1 {
+                v2 = Const(Bool(true))
+                v3 = CondBranch(bb2, bb3) v2
+              }
+              bb3 {
+                v7 = Const(Nil)
+                v8 = Return v7
+              }
+              bb2 {
+                v4 = Const(Int(1))
+                v5 = Print v4
+                v6 = Branch(bb1)
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_while_complex_cond() {
+        check("
+            var a = 1;
+            while (a < 10) { print a; }",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Store(@0) v0, v1
+                v3 = Branch(bb1)
+              }
+              bb1 {
+                v4 = Load(@0) v0
+                v5 = Const(Int(10))
+                v6 = GuardInt v4
+                v7 = GuardInt v5
+                v8 = Less v6, v7
+                v9 = CondBranch(bb2, bb3) v8
+              }
+              bb3 {
+                v13 = Const(Nil)
+                v14 = Return v13
+              }
+              bb2 {
+                v10 = Load(@0) v0
+                v11 = Print v10
+                v12 = Branch(bb1)
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_count_up() {
+        check("
+            var a = 1;
+            while (a < 10) { print a; a = a + 1; }",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Store(@0) v0, v1
+                v3 = Branch(bb1)
+              }
+              bb1 {
+                v4 = Load(@0) v0
+                v5 = Const(Int(10))
+                v6 = GuardInt v4
+                v7 = GuardInt v5
+                v8 = Less v6, v7
+                v9 = CondBranch(bb2, bb3) v8
+              }
+              bb3 {
+                v19 = Const(Nil)
+                v20 = Return v19
+              }
+              bb2 {
+                v10 = Load(@0) v0
+                v11 = Print v10
+                v12 = Load(@0) v0
+                v13 = Const(Int(1))
+                v14 = GuardInt v12
+                v15 = GuardInt v13
+                v16 = Add v14, v15
+                v17 = Store(@0) v0, v16
+                v18 = Branch(bb1)
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
     fn test_empty_fun() {
         check("fun empty() {}", expect![[r#"
             Entry: fn0
@@ -1908,5 +2054,46 @@ print a;",
               }
             }
         "#]])
+    }
+
+    #[test]
+    fn test_count_up() {
+        check("
+            var a = 1;
+            while (a < 10) { print a; a = a + 1; }",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Store(@0) v0, v1
+                v3 = Branch(bb1)
+              }
+              bb1 {
+                v21 = Phi v1, v16
+                v5 = Const(Int(10))
+                v6 = GuardInt v21
+                v7 = GuardInt v5
+                v8 = Less v6, v7
+                v9 = CondBranch(bb2, bb3) v8
+              }
+              bb3 {
+                v19 = Const(Nil)
+                v20 = Return v19
+              }
+              bb2 {
+                v22 = Phi v1, v16
+                v11 = Print v22
+                v23 = Phi v1, v16
+                v13 = Const(Int(1))
+                v14 = GuardInt v23
+                v15 = GuardInt v13
+                v16 = Add v14, v15
+                v17 = Store(@0) v0, v16
+                v18 = Branch(bb1)
+              }
+            }
+        "#]]);
     }
 }
