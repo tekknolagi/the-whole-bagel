@@ -1153,6 +1153,8 @@ impl Parser<'_> {
             if op_prec < prec { return self.lvalue_as_rvalue(env, lhs); }
             self.tokens.next();
             let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
+            // Special case: we need to look up the frame slot and write to it or assign to the
+            // attribute
             if token == Token::Equal {
                 lhs = match lhs {
                     LValue::Insn(..) => return Err(ParseError::CannotAssignTo(lhs)),
@@ -1173,12 +1175,16 @@ impl Parser<'_> {
                     }
                 };
                 continue;
-            } else if token == Token::Dot {
+            }
+            // Special case: we need to hold off evaluating the attribute until it is read
+            // elsewhere or written
+            if token == Token::Dot {
                 let name = self.expect_ident()?;
                 let obj = self.lvalue_as_rvalue(env, lhs)?;
                 lhs = LValue::Attr(obj, name);
                 continue;
             }
+            // Evaluate the lvalue because we want to use it in a binary operation
             let mut lhs_value = self.lvalue_as_rvalue(env, lhs)?;
             if token == Token::And {
                 todo!("ssa from `and' keyword")
