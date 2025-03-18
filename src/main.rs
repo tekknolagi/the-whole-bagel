@@ -1138,8 +1138,7 @@ impl Parser<'_> {
         };
         while let Some(token) = self.tokens.peek() {
             let (assoc, op_prec) = match token {
-                // TODO(max): Check associativity of =
-                Token::Equal => (Assoc::Left, 0),
+                Token::Equal => (Assoc::Right, 0),
                 Token::And => (Assoc::Left, 1),
                 Token::Or => (Assoc::Left, 1),
                 Token::EqualEqual => (Assoc::Left, 2),
@@ -1168,7 +1167,8 @@ impl Parser<'_> {
                     LValue::Insn(..) => return Err(ParseError::CannotAssignTo(lhs)),
                     LValue::Name(name) => {
                         let rhs = self.parse_(&mut env, next_prec)?;
-                        LValue::Insn(self.store_local(&mut env, name, rhs)?)
+                        self.store_local(&mut env, name, rhs)?;
+                        lhs
                     }
                     LValue::Attr(obj, name) => {
                         let rhs = self.parse_(&mut env, next_prec)?;
@@ -1667,9 +1667,49 @@ print a;",
                 v3 = Const(Int(2))
                 v4 = Store(@0) v0, v3
                 v5 = Load(@0) v0
-                v6 = Print v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v6 = Load(@0) v0
+                v7 = Print v6
+                v8 = Const(Nil)
+                v9 = Return v8
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_var_assign_nested() {
+        check("
+var a = 1;
+var b = 2;
+var c = 3;
+a = b = c;
+print a;
+print b;
+print c;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Store(@0) v0, v1
+                v3 = Const(Int(2))
+                v4 = Store(@1) v0, v3
+                v5 = Const(Int(3))
+                v6 = Store(@2) v0, v5
+                v7 = Load(@2) v0
+                v8 = Store(@1) v0, v7
+                v9 = Load(@1) v0
+                v10 = Store(@0) v0, v9
+                v11 = Load(@0) v0
+                v12 = Load(@0) v0
+                v13 = Print v12
+                v14 = Load(@1) v0
+                v15 = Print v14
+                v16 = Load(@2) v0
+                v17 = Print v16
+                v18 = Const(Nil)
+                v19 = Return v18
               }
             }
         "#]])
@@ -1722,20 +1762,22 @@ print a;
                 v5 = CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v8 = Const(Int(4))
-                v9 = Store(@0) v0, v8
-                v10 = Branch(bb3)
+                v9 = Const(Int(4))
+                v10 = Store(@0) v0, v9
+                v11 = Load(@0) v0
+                v12 = Branch(bb3)
               }
               bb1 {
                 v6 = Const(Int(3))
                 v7 = Store(@0) v0, v6
-                v11 = Branch(bb3)
+                v8 = Load(@0) v0
+                v13 = Branch(bb3)
               }
               bb3 {
-                v12 = Load(@0) v0
-                v13 = Print v12
-                v14 = Const(Nil)
-                v15 = Return v14
+                v14 = Load(@0) v0
+                v15 = Print v14
+                v16 = Const(Nil)
+                v17 = Return v16
               }
             }
         "#]])
@@ -1855,8 +1897,8 @@ print a;
                 v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v20 = Const(Nil)
-                v21 = Return v20
+                v21 = Const(Nil)
+                v22 = Return v21
               }
               bb2 {
                 v11 = Load(@0) v0
@@ -1867,7 +1909,8 @@ print a;
                 v16 = GuardInt v14
                 v17 = Add v15, v16
                 v18 = Store(@0) v0, v17
-                v19 = Branch(bb1)
+                v19 = Load(@0) v0
+                v20 = Branch(bb1)
               }
             }
         "#]]);
@@ -2654,11 +2697,11 @@ print a;",
                 v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
                 v4 = Store(@0) v0, v3
-                v5 = Const(Int(3))
-                v6 = Store(@0) v0, v5
-                v8 = Print v5
-                v9 = Const(Nil)
-                v10 = Return v9
+                v6 = Const(Int(3))
+                v7 = Store(@0) v0, v6
+                v10 = Print v6
+                v11 = Const(Nil)
+                v12 = Return v11
               }
             }
         "#]])
@@ -2678,9 +2721,9 @@ print a;",
                 v1 = Const(Int(1))
                 v2 = Store(@0) v0, v1
                 v4 = Store(@0) v0, v1
-                v6 = Print v1
-                v7 = Const(Nil)
-                v8 = Return v7
+                v7 = Print v1
+                v8 = Const(Nil)
+                v9 = Return v8
               }
             }
         "#]])
@@ -2703,9 +2746,42 @@ print a;",
                 v3 = Const(Int(2))
                 v4 = Store(@1) v0, v3
                 v6 = Store(@0) v0, v3
-                v8 = Print v3
-                v9 = Const(Nil)
-                v10 = Return v9
+                v9 = Print v3
+                v10 = Const(Nil)
+                v11 = Return v10
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_var_assign_nested() {
+        check("
+var a = 1;
+var b = 2;
+var c = 3;
+a = b = c;
+print a;
+print b;
+print c;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Store(@0) v0, v1
+                v3 = Const(Int(2))
+                v4 = Store(@1) v0, v3
+                v5 = Const(Int(3))
+                v6 = Store(@2) v0, v5
+                v8 = Store(@1) v0, v5
+                v10 = Store(@0) v0, v5
+                v13 = Print v5
+                v15 = Print v5
+                v17 = Print v5
+                v18 = Const(Nil)
+                v19 = Return v18
               }
             }
         "#]])
@@ -2756,20 +2832,20 @@ print a;",
                 v5 = CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v8 = Const(Int(4))
-                v9 = Store(@0) v0, v8
-                v10 = Branch(bb3)
+                v9 = Const(Int(4))
+                v10 = Store(@0) v0, v9
+                v12 = Branch(bb3)
               }
               bb1 {
                 v6 = Const(Int(3))
                 v7 = Store(@0) v0, v6
-                v11 = Branch(bb3)
+                v13 = Branch(bb3)
               }
               bb3 {
-                v16 = Phi v6, v8
-                v13 = Print v16
-                v14 = Const(Nil)
-                v15 = Return v14
+                v18 = Phi v6, v9
+                v15 = Print v18
+                v16 = Const(Nil)
+                v17 = Return v16
               }
             }
         "#]])
@@ -2790,28 +2866,28 @@ print a;",
                 v3 = Branch(bb1)
               }
               bb1 {
-                v22 = Phi v1, v17
+                v23 = Phi v1, v17
                 v5 = Const(Int(10))
-                v6 = GuardInt v22
+                v6 = GuardInt v23
                 v7 = GuardInt v5
                 v8 = Less v6, v7
                 v9 = IsTruthy v8
                 v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v20 = Const(Nil)
-                v21 = Return v20
+                v21 = Const(Nil)
+                v22 = Return v21
               }
               bb2 {
-                v23 = Phi v1, v17
-                v12 = Print v23
                 v24 = Phi v1, v17
+                v12 = Print v24
+                v25 = Phi v1, v17
                 v14 = Const(Int(1))
-                v15 = GuardInt v24
+                v15 = GuardInt v25
                 v16 = GuardInt v14
                 v17 = Add v15, v16
                 v18 = Store(@0) v0, v17
-                v19 = Branch(bb1)
+                v20 = Branch(bb1)
               }
             }
         "#]]);
