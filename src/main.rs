@@ -504,6 +504,7 @@ impl Function {
             Opcode::LoadAttr(_) => true,
             Opcode::StoreAttr(_) => true,
             Opcode::GuardInt => true,
+            Opcode::GuardClass => true,
             Opcode::IsTruthy => false,
             Opcode::NewClass(_) => false,
             Opcode::This => false,
@@ -645,6 +646,7 @@ enum Opcode {
     LoadAttr(NameId),
     StoreAttr(NameId),
     GuardInt,
+    GuardClass,
     IsTruthy,
     This,
     Call(InsnId),
@@ -847,7 +849,11 @@ impl Parser<'_> {
         self.expect(Token::Class)?;
         let name = self.expect_ident()?;
         let superclass = match self.tokens.peek() {
-            Some(Token::Less) => { self.tokens.next(); self.parse_ident(env)? }
+            Some(Token::Less) => {
+                self.tokens.next();
+                let value = self.parse_ident(env)?;
+                self.push_insn(Opcode::GuardClass, smallvec![value])
+            }
             _ => self.push_op(Opcode::Const(Value::ObjectClass)),
         };
         self.expect(Token::LCurly)?;
@@ -2524,10 +2530,11 @@ print a;
                 v2 = NewClass(C, v1)
                 v3 = Store(@0) v0, v2
                 v4 = Load(@0) v0
-                v5 = NewClass(D, v4)
-                v6 = Store(@1) v0, v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v5 = GuardClass v4
+                v6 = NewClass(D, v5)
+                v7 = Store(@1) v0, v6
+                v8 = Const(Nil)
+                v9 = Return v8
               }
             }
         "#]])
