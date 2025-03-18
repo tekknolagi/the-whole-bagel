@@ -504,7 +504,7 @@ impl Function {
             Opcode::LoadAttr(_) => true,
             Opcode::StoreAttr(_) => true,
             Opcode::GuardInt => true,
-            Opcode::GuardBool => true,
+            Opcode::IsTruthy => false,
             Opcode::NewClass(_) => false,
             Opcode::This => false,
             Opcode::NewClosure(_) => false,
@@ -643,7 +643,7 @@ enum Opcode {
     LoadAttr(NameId),
     StoreAttr(NameId),
     GuardInt,
-    GuardBool,
+    IsTruthy,
     This,
     Call(InsnId),
 }
@@ -942,7 +942,7 @@ impl Parser<'_> {
                 self.tokens.next();
                 self.expect(Token::LParen)?;
                 let cond = self.parse_expression(&mut env)?;
-                let cond = self.push_insn(Opcode::GuardBool, smallvec![cond]);
+                let cond = self.push_insn(Opcode::IsTruthy, smallvec![cond]);
                 self.expect(Token::RParen)?;
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
@@ -975,7 +975,7 @@ impl Parser<'_> {
                 self.push_op(Opcode::Branch(header_block));
                 self.enter_block(header_block);
                 let cond = self.parse_expression(&mut env)?;
-                let cond = self.push_insn(Opcode::GuardBool, smallvec![cond]);
+                let cond = self.push_insn(Opcode::IsTruthy, smallvec![cond]);
                 self.expect(Token::RParen)?;
                 let body_block = self.new_block();
                 let after_block = self.new_block();
@@ -1191,7 +1191,7 @@ impl Parser<'_> {
             } else if token == Token::Or {
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
-                let lhs_value = self.push_insn(Opcode::GuardBool, smallvec![lhs_value]);
+                let lhs_value = self.push_insn(Opcode::IsTruthy, smallvec![lhs_value]);
                 self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![lhs_value.clone()]);
                 self.enter_block(iffalse_block);
                 let rhs = self.parse_(&mut env, next_prec)?;
@@ -1654,7 +1654,7 @@ print a;
                 v1 = Const(Int(1))
                 v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = GuardBool v3
+                v4 = IsTruthy v3
                 v5 = CondBranch(bb1, bb2) v4
               }
               bb2 {
@@ -1689,7 +1689,7 @@ print a;
               }
               bb1 {
                 v2 = Const(Bool(true))
-                v3 = GuardBool v2
+                v3 = IsTruthy v2
                 v4 = CondBranch(bb2, bb3) v3
               }
               bb3 {
@@ -1715,7 +1715,7 @@ print a;
               }
               bb1 {
                 v2 = Const(Bool(true))
-                v3 = GuardBool v2
+                v3 = IsTruthy v2
                 v4 = CondBranch(bb2, bb3) v3
               }
               bb3 {
@@ -1751,7 +1751,7 @@ print a;
                 v6 = GuardInt v4
                 v7 = GuardInt v5
                 v8 = Less v6, v7
-                v9 = GuardBool v8
+                v9 = IsTruthy v8
                 v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
@@ -1787,7 +1787,7 @@ print a;
                 v6 = GuardInt v4
                 v7 = GuardInt v5
                 v8 = Less v6, v7
-                v9 = GuardBool v8
+                v9 = IsTruthy v8
                 v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
@@ -2620,7 +2620,7 @@ print a;",
                 v1 = Const(Int(1))
                 v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = GuardBool v3
+                v4 = IsTruthy v3
                 v5 = CondBranch(bb1, bb2) v4
               }
               bb2 {
@@ -2663,7 +2663,7 @@ print a;",
                 v6 = GuardInt v22
                 v7 = GuardInt v5
                 v8 = Less v6, v7
-                v9 = GuardBool v8
+                v9 = IsTruthy v8
                 v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
