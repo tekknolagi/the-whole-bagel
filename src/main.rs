@@ -377,10 +377,10 @@ impl Function {
                 for insn_id in &self.blocks[block_id.0].insns {
                     let Insn { opcode, operands } = &self.insns[insn_id.0];
                     match opcode {
-                        Opcode::WriteLocal(offset) => {
+                        Opcode::Store(offset) => {
                             env[offset.0] = InsnSet::one(self.find(operands[1]));
                         }
-                        Opcode::ReadLocal(offset) if last_pass => {
+                        Opcode::Load(offset) if last_pass => {
                             replacements.insert(*insn_id, env[offset.0].clone());
                         }
                         _ => {}
@@ -434,8 +434,8 @@ impl Function {
             Opcode::CondBranch(..) => true,
             Opcode::Phi => false,
             Opcode::NewFrame => false,
-            Opcode::ReadLocal(_) => false,
-            Opcode::WriteLocal(_) => true,
+            Opcode::Load(_) => false,
+            Opcode::Store(_) => true,
             Opcode::GuardInt => true,
             Opcode::NewClass(_) => false,
             Opcode::This => false,
@@ -540,8 +540,8 @@ enum Opcode {
     NewFrame,
     NewClass(ClassDef),
     NewClosure(FunId),
-    ReadLocal(Offset),
-    WriteLocal(Offset),
+    Load(Offset),
+    Store(Offset),
     GuardInt,
     This,
 }
@@ -865,14 +865,14 @@ impl Parser<'_> {
         let fun_id = self.fun();
         let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
         *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-        self.push_insn(Opcode::WriteLocal(offset), vec![self.frame(), value]);
+        self.push_insn(Opcode::Store(offset), vec![self.frame(), value]);
     }
 
     fn read_local(&mut self, offset: Offset) -> InsnId {
         let fun_id = self.fun();
         let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
         *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-        self.push_insn(Opcode::ReadLocal(offset), vec![self.frame()])
+        self.push_insn(Opcode::Load(offset), vec![self.frame()])
     }
 
     fn parse_function(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
@@ -1318,8 +1318,8 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
-                v3 = ReadLocal(@0) v0
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
                 v4 = Print v3
                 v5 = Const(Nil)
                 v6 = Return v5
@@ -1340,10 +1340,10 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(@0) v0, v3
-                v5 = ReadLocal(@0) v0
+                v4 = Store(@0) v0, v3
+                v5 = Load(@0) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1364,10 +1364,10 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(@1) v0, v3
-                v5 = ReadLocal(@1) v0
+                v4 = Store(@1) v0, v3
+                v5 = Load(@1) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1393,22 +1393,22 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
                 v4 = CondBranch(bb1, bb2) v3
               }
               bb2 {
                 v7 = Const(Int(4))
-                v8 = WriteLocal(@0) v0, v7
+                v8 = Store(@0) v0, v7
                 v9 = Branch(bb3)
               }
               bb1 {
                 v5 = Const(Int(3))
-                v6 = WriteLocal(@0) v0, v5
+                v6 = Store(@0) v0, v5
                 v10 = Branch(bb3)
               }
               bb3 {
-                v11 = ReadLocal(@0) v0
+                v11 = Load(@0) v0
                 v12 = Print v11
                 v13 = Const(Nil)
                 v14 = Return v13
@@ -1425,7 +1425,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1455,10 +1455,10 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(@1) v0, v3
-                v5 = ReadLocal(@0) v0
+                v4 = Store(@1) v0, v3
+                v5 = Load(@0) v0
                 v6 = Print v5
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1475,7 +1475,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1498,7 +1498,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1507,8 +1507,8 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Param(0)
-                v2 = WriteLocal(@0) v0, v1
-                v3 = ReadLocal(@0) v0
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
                 v4 = Return v3
               }
             }
@@ -1523,7 +1523,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1532,8 +1532,8 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Param(0)
-                v2 = WriteLocal(@0) v0, v1
-                v3 = ReadLocal(@0) v0
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
                 v4 = Const(Int(1))
                 v5 = GuardInt v3
                 v6 = GuardInt v4
@@ -1552,7 +1552,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1561,11 +1561,11 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = Param(0)
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Param(1)
-                v4 = WriteLocal(@1) v0, v3
-                v5 = ReadLocal(@0) v0
-                v6 = ReadLocal(@1) v0
+                v4 = Store(@1) v0, v3
+                v5 = Load(@0) v0
+                v6 = Load(@1) v0
                 v7 = GuardInt v5
                 v8 = GuardInt v6
                 v9 = Add v7, v8
@@ -1586,8 +1586,8 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
-                v2 = WriteLocal(@0) v0, v1
-                v3 = ReadLocal(@0) v0
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
                 v4 = Const(Nil)
                 v5 = Return v4
               }
@@ -1635,7 +1635,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = This
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1662,7 +1662,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = This
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1671,7 +1671,7 @@ print a;
               bb0 {
                 v0 = NewFrame
                 v1 = This
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
@@ -1741,7 +1741,7 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v4 = Print v1
                 v5 = Const(Nil)
                 v6 = Return v5
@@ -1763,11 +1763,11 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(@0) v0, v3
+                v4 = Store(@0) v0, v3
                 v5 = Const(Int(3))
-                v6 = WriteLocal(@0) v0, v5
+                v6 = Store(@0) v0, v5
                 v8 = Print v5
                 v9 = Const(Nil)
                 v10 = Return v9
@@ -1788,8 +1788,8 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
-                v4 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
+                v4 = Store(@0) v0, v1
                 v6 = Print v1
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1811,10 +1811,10 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(@1) v0, v3
-                v6 = WriteLocal(@0) v0, v3
+                v4 = Store(@1) v0, v3
+                v6 = Store(@0) v0, v3
                 v8 = Print v3
                 v9 = Const(Nil)
                 v10 = Return v9
@@ -1835,9 +1835,9 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = WriteLocal(@1) v0, v3
+                v4 = Store(@1) v0, v3
                 v6 = Print v3
                 v7 = Const(Nil)
                 v8 = Return v7
@@ -1862,18 +1862,18 @@ print a;",
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
-                v2 = WriteLocal(@0) v0, v1
+                v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
                 v4 = CondBranch(bb1, bb2) v3
               }
               bb2 {
                 v7 = Const(Int(4))
-                v8 = WriteLocal(@0) v0, v7
+                v8 = Store(@0) v0, v7
                 v9 = Branch(bb3)
               }
               bb1 {
                 v5 = Const(Int(3))
-                v6 = WriteLocal(@0) v0, v5
+                v6 = Store(@0) v0, v5
                 v10 = Branch(bb3)
               }
               bb3 {
