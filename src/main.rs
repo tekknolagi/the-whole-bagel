@@ -730,10 +730,6 @@ impl<'a> Env<'a> {
         self.bindings.get(&name).copied()
     }
 
-    fn is_defined(&self, name: NameId) -> bool {
-        return self.bindings.get(&name).is_some();
-    }
-
     fn define(&mut self, name: NameId) -> Offset {
         let offset = Offset(self.bindings.len());
         self.bindings.insert(name.clone(), offset);
