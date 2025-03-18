@@ -755,10 +755,10 @@ enum ParseError {
     UnexpectedEof,
     UnboundName(&'static str),
     VariableShadows(&'static str),
-    AssignToNonLValue,
+    CannotAssignTo(LValue),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum LValue {
     Insn(InsnId),
     Name(NameId),
@@ -1157,7 +1157,7 @@ impl Parser<'_> {
             let next_prec = if assoc == Assoc::Left { op_prec + 1 } else { op_prec };
             if token == Token::Equal {
                 lhs = match lhs {
-                    LValue::Insn(..) => return Err(ParseError::AssignToNonLValue),
+                    LValue::Insn(..) => return Err(ParseError::CannotAssignTo(lhs)),
                     LValue::Name(name) => {
                         let rhs = self.parse_(&mut env, next_prec)?;
                         match env.lookup(name) {
@@ -1580,7 +1580,7 @@ print a;",
 
     #[test]
     fn test_assign_non_lvalue() {
-        check_error("1 = 2;", expect!["Err(AssignToNonLValue)"])
+        check_error("1 = 2;", expect!["Err(CannotAssignTo(Insn(v1)))"])
     }
 
     #[test]
