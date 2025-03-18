@@ -1191,8 +1191,8 @@ impl Parser<'_> {
             } else if token == Token::Or {
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
-                let lhs_value = self.push_insn(Opcode::IsTruthy, smallvec![lhs_value]);
-                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![lhs_value.clone()]);
+                let lhs_truthy = self.push_insn(Opcode::IsTruthy, smallvec![lhs_value]);
+                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![lhs_truthy.clone()]);
                 self.enter_block(iffalse_block);
                 let rhs = self.parse_(&mut env, next_prec)?;
                 self.push_op(Opcode::Branch(iftrue_block));
@@ -1486,6 +1486,30 @@ mod parser_tests {
                 v5 = Add v3, v4
                 v6 = Const(Nil)
                 v7 = Return v6
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_or() {
+        check("1 or 2;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = IsTruthy v1
+                v3 = CondBranch(bb1, bb2) v2
+              }
+              bb2 {
+                v4 = Const(Int(2))
+                v5 = Branch(bb1)
+              }
+              bb1 {
+                v6 = Phi v1, v4
+                v7 = Const(Nil)
+                v8 = Return v7
               }
             }
         "#]])
