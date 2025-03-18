@@ -851,7 +851,8 @@ impl Parser<'_> {
         let superclass = match self.tokens.peek() {
             Some(Token::Less) => {
                 self.tokens.next();
-                let value = self.parse_ident(env)?;
+                let name = self.expect_ident()?;
+                let value = self.load_local(env, name)?;
                 self.push_insn(Opcode::GuardClass, smallvec![value])
             }
             _ => self.push_op(Opcode::Const(Value::ObjectClass)),
@@ -867,8 +868,7 @@ impl Parser<'_> {
         }
         self.expect(Token::RCurly)?;
         let class = self.push_op(Opcode::NewClass(ClassDef { name, superclass, methods }));
-        let offset = env.define(name);
-        self.write_local(offset, class);
+        self.define_local(&mut env, name, class);
         Ok(())
     }
 
@@ -882,16 +882,14 @@ impl Parser<'_> {
         // closure) when using it so we don't bake in the value at compile-time.
         let mut func_env = Env::from_parent(fun, &env);
         let this_name = self.prog.intern("this");
-        let offset = func_env.define(this_name);
         let this = self.push_op(Opcode::This);
-        self.write_local(offset, this);
+        self.define_local(&mut func_env, this_name, this);
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
                     let name = self.prog.intern(name);
                     let param = self.push_op(Opcode::Param(idx));
-                    let offset = func_env.define(name);
-                    self.write_local(offset, param);
+                    self.define_local(&mut func_env, name, param);
                     self.tokens.next();
                     idx += 1;
                 }
@@ -943,8 +941,7 @@ impl Parser<'_> {
                 let name = self.expect_ident()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression(&mut env)?;
-                let offset = env.define(name);
-                self.write_local(offset, value);
+                self.define_local(&mut env, name, value);
                 Ok(())
             }
             Some(Token::If) => {
@@ -1040,8 +1037,7 @@ impl Parser<'_> {
                 Some(Token::Ident(name)) => {
                     let name = self.prog.intern(name);
                     let param = self.push_op(Opcode::Param(idx));
-                    let offset = func_env.define(name);
-                    self.write_local(offset, param);
+                    self.define_local(&mut func_env, name, param);
                     self.tokens.next();
                     idx += 1;
                 }
@@ -1061,8 +1057,7 @@ impl Parser<'_> {
         self.expect(Token::RCurly)?;
         self.leave_fun();
         let closure = self.push_op(Opcode::NewClosure(fun));
-        let offset = env.define(name);
-        self.write_local(offset, closure);
+        self.define_local(env, name, closure);
         Ok(())
     }
 
@@ -1089,10 +1084,21 @@ impl Parser<'_> {
         self.parse_(env, 0)
     }
 
-    fn parse_ident(&mut self, env: &Env) -> Result<InsnId, ParseError> {
-        let name = self.expect_ident()?;
+    fn load_local(&mut self, env: &Env, name: NameId) -> Result<InsnId, ParseError> {
         match env.lookup(name) {
             Some(offset) => Ok(self.read_local(offset)),
+            None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
+        }
+    }
+
+    fn define_local(&mut self, env: &mut Env, name: NameId, value: InsnId) {
+        let offset = env.define(name);
+        self.write_local(offset, value);
+    }
+
+    fn store_local(&mut self, env: &Env, name: NameId, value: InsnId) -> Result<InsnId, ParseError> {
+        match env.lookup(name) {
+            Some(offset) => { self.write_local(offset, value); Ok(value) }
             None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
         }
     }
@@ -1100,12 +1106,7 @@ impl Parser<'_> {
     fn lvalue_as_rvalue(&mut self, env: &Env, lvalue: LValue) -> Result<InsnId, ParseError> {
         match lvalue {
             LValue::Insn(insn_id) => Ok(insn_id),
-            LValue::Name(name) => {
-                match env.lookup(name) {
-                    Some(offset) => Ok(self.read_local(offset)),
-                    None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
-                }
-            }
+            LValue::Name(name) => self.load_local(env, name),
             LValue::Attr(obj, name) => Ok(self.push_insn(Opcode::LoadAttr(name), smallvec![obj]))
         }
     }
@@ -1177,13 +1178,7 @@ impl Parser<'_> {
                     LValue::Insn(..) => return Err(ParseError::CannotAssignTo(lhs)),
                     LValue::Name(name) => {
                         let rhs = self.parse_(&mut env, next_prec)?;
-                        match env.lookup(name) {
-                            Some(offset) => {
-                                self.write_local(offset, rhs);
-                                LValue::Insn(rhs)
-                            }
-                            None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
-                        }
+                        LValue::Insn(self.store_local(&mut env, name, rhs)?)
                     }
                     LValue::Attr(obj, name) => {
                         let rhs = self.parse_(&mut env, next_prec)?;
