@@ -226,11 +226,8 @@ impl<'a> Lexer<'a> {
 
     fn read_int(&mut self, mut result: i64) -> Result<Token, LexError> {
         loop {
-            match self.chars.peek() {
-                Some(c) if c.is_digit(NUMBER_BASE) => {
-                    result *= 10;
-                    result += c.to_digit(NUMBER_BASE).unwrap() as i64;
-                }
+            match self.chars.peek().and_then(|c| c.to_digit(NUMBER_BASE)).and_then(|d| Some(d as i64)) {
+                Some(d) => result = result * 10 + d,
                 _ => break,
             }
             self.chars.next();
@@ -517,7 +514,8 @@ impl Function {
 
     fn eliminate_dead_code(&mut self) {
         let mut worklist = VecDeque::new();
-        for block_id in self.rpo() {
+        let rpo = self.rpo();
+        for block_id in &rpo {
             for insn_id in &self.blocks[block_id.0].insns {
                 let insn_id = self.find(*insn_id);
                 if self.is_critical(insn_id) {
@@ -535,7 +533,7 @@ impl Function {
                 worklist.push_back(operand);
             }
         }
-        for block_id in self.rpo() {
+        for block_id in &rpo {
             let old_block = &self.blocks[block_id.0].insns;
             let mut new_block = vec![];
             for insn_id in old_block {
