@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use bit_set::BitSet;
 
+// TODO(max): Set up better testing infrastructure for parse errors
+
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
 }
@@ -440,6 +442,7 @@ impl Function {
             Opcode::NewClass(_) => false,
             Opcode::This => false,
             Opcode::NewClosure(_) => false,
+            Opcode::Call(_) => true,
         }
     }
 
@@ -544,6 +547,7 @@ enum Opcode {
     Store(Offset),
     GuardInt,
     This,
+    Call(InsnId),
 }
 
 #[derive(Debug)]
@@ -644,6 +648,7 @@ struct Parser<'a> {
 enum ParseError {
     UnexpectedToken(Token),
     UnexpectedError,
+    UnexpectedEOF,
     UnboundName(String),
     VariableShadows(String),
 }
@@ -935,6 +940,25 @@ impl Parser<'_> {
         Ok(())
     }
 
+    fn parse_args(&mut self, mut env: &mut Env) -> Result<Vec<InsnId>, ParseError> {
+        // TODO(max): Come up with a better idiom to parse comma-separated lists. This is wack.
+        // TODO(max): Disallow f(x,)
+        let mut result = vec![];
+        loop {
+            match self.tokens.peek() {
+                Some(Token::RParen) => break,
+                Some(Token::Comma) => return Err(ParseError::UnexpectedToken(Token::Comma)),
+                None => return Err(ParseError::UnexpectedEOF),
+                _ => result.push(self.parse_expression(&mut env)?),
+            }
+            match self.tokens.peek() {
+                Some(Token::Comma) => { self.tokens.next(); }
+                _ => break,
+            }
+        }
+        Ok(result)
+    }
+
     fn parse_expression(&mut self, mut env: &mut Env) -> Result<InsnId, ParseError> {
         self.parse_(env, 0)
     }
@@ -1005,6 +1029,7 @@ impl Parser<'_> {
                 Token::Minus => (Assoc::Left, 3),
                 Token::Star => (Assoc::Any, 4),
                 Token::ForwardSlash => (Assoc::Left, 4),
+                Token::LParen => (Assoc::Any, 5),
                 _ => break,
             };
             let token = token.clone();
@@ -1022,6 +1047,11 @@ impl Parser<'_> {
                 self.push_insn(Opcode::Branch(iftrue_block), vec![]);
                 self.enter_block(iftrue_block);
                 lhs = self.push_insn(Opcode::Phi, vec![lhs, rhs])
+            } else if token == Token::LParen {
+                // Function call
+                let operands = self.parse_args(&mut env)?;
+                self.expect(Token::RParen)?;
+                lhs = self.push_insn(Opcode::Call(lhs), operands)
             } else {
                 let opcode = match token {
                     Token::EqualEqual => Opcode::Equal,
@@ -1738,6 +1768,94 @@ print a;
                 v3 = Load(@0) v0
                 v4 = Const(Nil)
                 v5 = Return v4
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Nil)
+                v2 = Return v1
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_call_func_no_args() {
+        check("
+            fun f() { }
+            f();
+        ", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = Call(v3)
+                v5 = Const(Nil)
+                v6 = Return v5
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Nil)
+                v2 = Return v1
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_call_func_one_arg() {
+        check("
+            fun f() { }
+            f(1);
+        ", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = Const(Int(1))
+                v5 = Call(v3) v4
+                v6 = Const(Nil)
+                v7 = Return v6
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Nil)
+                v2 = Return v1
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_call_func_multiple_args() {
+        check("
+            fun f() { }
+            f(1, 2, 3);
+        ", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Load(@0) v0
+                v4 = Const(Int(1))
+                v5 = Const(Int(2))
+                v6 = Const(Int(3))
+                v7 = Call(v3) v4, v5, v6
+                v8 = Const(Nil)
+                v9 = Return v8
               }
             }
             fn1: fun f (entry bb0) {
