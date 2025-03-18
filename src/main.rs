@@ -1966,6 +1966,78 @@ print a;
     }
 
     #[test]
+    fn test_add_call() {
+        check("
+            fun f() { }
+            1+f()+2;
+        ", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Int(1))
+                v4 = Load(@0) v0
+                v5 = Call(v4)
+                v6 = Const(Int(2))
+                v7 = GuardInt v5
+                v8 = GuardInt v6
+                v9 = Add v7, v8
+                v10 = GuardInt v3
+                v11 = GuardInt v9
+                v12 = Add v10, v11
+                v13 = Const(Nil)
+                v14 = Return v13
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Nil)
+                v2 = Return v1
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
+    fn test_mul_call() {
+        check("
+            fun f() { }
+            1*f()*2;
+        ", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Int(1))
+                v4 = Load(@0) v0
+                v5 = Call(v4)
+                v6 = Const(Int(2))
+                v7 = GuardInt v5
+                v8 = GuardInt v6
+                v9 = Mul v7, v8
+                v10 = GuardInt v3
+                v11 = GuardInt v9
+                v12 = Mul v10, v11
+                v13 = Const(Nil)
+                v14 = Return v13
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Nil)
+                v2 = Return v1
+              }
+            }
+        "#]]);
+    }
+
+    #[test]
     fn test_class() {
         check("class C { }", expect![[r#"
             Entry: fn0
