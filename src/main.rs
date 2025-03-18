@@ -1562,6 +1562,23 @@ print a;",
     }
 
     #[test]
+    fn test_long_var() {
+        check("var aaaabbbbccccdddd = 1;",
+        expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_assign_non_lvalue() {
         check_error("1 = 2;", expect!["Err(AssignToNonLValue)"])
     }
