@@ -1493,7 +1493,7 @@ mod parser_tests {
 
     #[test]
     fn test_or() {
-        check("1 or 2;", expect![[r#"
+        check("print (1 or 2);", expect![[r#"
             Entry: fn0
             fn0: fun <toplevel> (entry bb0) {
               bb0 {
@@ -1508,8 +1508,43 @@ mod parser_tests {
               }
               bb1 {
                 v6 = Phi v1, v4
-                v7 = Const(Nil)
-                v8 = Return v7
+                v7 = Print v6
+                v8 = Const(Nil)
+                v9 = Return v8
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_or_or() {
+        check("print (1 or 2 or 3);", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(Int(1))
+                v2 = IsTruthy v1
+                v3 = CondBranch(bb1, bb2) v2
+              }
+              bb2 {
+                v4 = Const(Int(2))
+                v5 = Branch(bb1)
+              }
+              bb1 {
+                v6 = Phi v1, v4
+                v7 = IsTruthy v6
+                v8 = CondBranch(bb3, bb4) v7
+              }
+              bb4 {
+                v9 = Const(Int(3))
+                v10 = Branch(bb3)
+              }
+              bb3 {
+                v11 = Phi v6, v9
+                v12 = Print v11
+                v13 = Const(Nil)
+                v14 = Return v13
               }
             }
         "#]])
