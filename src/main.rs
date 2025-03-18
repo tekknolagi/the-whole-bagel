@@ -6,9 +6,6 @@ use std::collections::VecDeque;
 use bit_set::BitSet;
 use smallvec::{smallvec, SmallVec};
 
-// TODO(max): Set up better testing infrastructure for parse errors
-
-
 // ===== Begin matklad string interning =====
 
 #[derive(Default)]
@@ -1399,6 +1396,18 @@ mod parser_tests {
         expect.assert_eq(format!("{actual}").as_str());
     }
 
+    fn check_error(source: &str, expect: Expect) {
+        let mut lexer = Lexer::from_str(source);
+        let mut parser = Parser::from_lexer(&mut lexer);
+        let result = parser.parse_program();
+        expect.assert_eq(format!("{result:?}").as_str())
+    }
+
+    #[test]
+    fn test_missing_semicolon() {
+        check_error("1", expect!["Err(UnexpectedEof)"])
+    }
+
     #[test]
     fn test_toplevel_int_expression_statement() {
         check("1;", expect![[r#"
@@ -1518,6 +1527,18 @@ mod parser_tests {
               }
             }
         "#]])
+    }
+
+    #[test]
+    fn test_read_unbound_var() {
+        check_error("a",
+        expect![[r#"Err(UnboundName("a"))"#]])
+    }
+
+    #[test]
+    fn test_write_unbound_var() {
+        check_error("a = 1;",
+        expect![[r#"Err(UnboundName("a"))"#]])
     }
 
     #[test]
@@ -1941,6 +1962,14 @@ print a;
               }
             }
         "#]]);
+    }
+
+    #[test]
+    fn test_call_double_comma() {
+        check_error("
+            fun f() { }
+            f(1,,);
+        ", expect!["Err(UnexpectedToken(Comma))"]);
     }
 
     #[test]
