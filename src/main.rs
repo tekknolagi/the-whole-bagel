@@ -2,8 +2,8 @@
 #![allow(unused_mut)]
 #![allow(unused_variables)]
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::collections::VecDeque;
+use bit_set::BitSet;
 
 struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
@@ -216,10 +216,56 @@ macro_rules! define_id_type {
     }
 }
 
+#[derive(Clone, PartialEq)]
+struct TypedBitSet<T> {
+    set: BitSet,
+    phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T> {
+    pub fn new() -> Self {
+        Self { set: BitSet::new(), phantom: Default::default() }
+    }
+
+    pub fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    pub fn one(item: T) -> Self {
+        let mut set = BitSet::new();
+        set.insert(item.into());
+        Self { set, phantom: Default::default() }
+    }
+
+    pub fn union(&self, other: &Self) -> Self {
+        Self { set: self.set.union(&other.set).collect(), phantom: Default::default() }
+    }
+
+    pub fn contains(&self, item: T) -> bool {
+        self.set.contains(item.into())
+    }
+
+    pub fn insert(&mut self, item: T) -> bool {
+        self.set.insert(item.into())
+    }
+
+    pub fn as_vec(&self) -> Vec<T> {
+        self.set.iter().map(|idx| idx.into()).collect()
+    }
+
+    pub fn get_single(&self) -> T {
+        assert_eq!(self.len(), 1);
+        self.set.iter().next().unwrap().into()
+    }
+}
+
 define_id_type!("v", InsnId);
 define_id_type!("bb", BlockId);
 define_id_type!("fn", FunId);
 define_id_type!("@", Offset);
+
+type InsnSet = TypedBitSet<InsnId>;
+type BlockSet = TypedBitSet<BlockId>;
 
 #[derive(Debug)]
 struct Block {
@@ -295,15 +341,15 @@ impl Function {
     }
 
     fn rpo(&self) -> Vec<BlockId> {
-        let mut visited = HashSet::new();
+        let mut visited = BlockSet::new();
         let mut result = vec![];
         self.po_from(self.entry, &mut result, &mut visited);
         result.reverse();
         result
     }
 
-    fn po_from(&self, block: BlockId, result: &mut Vec<BlockId>, visited: &mut HashSet<BlockId>) {
-        if visited.contains(&block) { return; }
+    fn po_from(&self, block: BlockId, result: &mut Vec<BlockId>, visited: &mut BlockSet) {
+        if visited.contains(block) { return; }
         visited.insert(block);
         for succ in self.succs(block) {
             self.po_from(succ, result, visited);
@@ -312,17 +358,17 @@ impl Function {
     }
 
     fn unbox_locals(&mut self) {
-        fn join(left: &Vec<HashSet<InsnId>>, right: &Vec<HashSet<InsnId>>) -> Vec<HashSet<InsnId>> {
+        fn join(left: &Vec<InsnSet>, right: &Vec<InsnSet>) -> Vec<InsnSet> {
             assert_eq!(left.len(), right.len());
-            let mut result = vec![HashSet::new(); left.len()];
+            let mut result = vec![InsnSet::new(); left.len()];
             for idx in 0..left.len() {
-                result[idx] = left[idx].union(&right[idx]).map(|insn| *insn).collect();
+                result[idx] = left[idx].union(&right[idx]);
             }
             result
         }
-        let empty_state = vec![HashSet::new(); self.num_locals];
+        let empty_state = vec![InsnSet::new(); self.num_locals];
         let mut block_entry = vec![empty_state.clone(); self.blocks.len()];
-        let mut replacements: HashMap<InsnId, Vec<InsnId>> = HashMap::new();
+        let mut replacements: HashMap<InsnId, InsnSet> = HashMap::new();
         let mut last_pass = false;
         loop {
             let mut changed = false;
@@ -332,10 +378,10 @@ impl Function {
                     let Insn { opcode, operands } = &self.insns[insn_id.0];
                     match opcode {
                         Opcode::WriteLocal(offset) => {
-                            env[offset.0] = HashSet::from([self.find(operands[1])]);
+                            env[offset.0] = InsnSet::one(self.find(operands[1]));
                         }
                         Opcode::ReadLocal(offset) if last_pass => {
-                            replacements.insert(*insn_id, env[offset.0].iter().map(|id| *id).collect());
+                            replacements.insert(*insn_id, env[offset.0].clone());
                         }
                         _ => {}
                     }
@@ -356,12 +402,11 @@ impl Function {
             }
         }
         for (insn_id, mut operands) in replacements {
-            match operands[..] {
-                [] => panic!("Should have at least one value"),
-                [val] => self.make_equal_to(insn_id, val),
+            match operands.len() {
+                0 => panic!("Should have at least one value"),
+                1 => self.make_equal_to(insn_id, operands.get_single()),
                 _ => {
-                    operands.sort();
-                    let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands });
+                    let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands: operands.as_vec() });
                     self.make_equal_to(insn_id, phi);
                 }
             }
@@ -435,12 +480,12 @@ impl Function {
 impl std::fmt::Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         writeln!(f, "fun {} (entry {}) {{", self.name, self.entry)?;
-        let mut seen = HashSet::new();
+        let mut seen = InsnSet::new();
         for block_id in self.rpo() {
             writeln!(f, "  {block_id} {{")?;
             for insn_id in &self.blocks[block_id.0].insns {
                 let insn_id = self.find(*insn_id);
-                if seen.contains(&insn_id) { continue; }
+                if seen.contains(insn_id) { continue; }
                 seen.insert(insn_id);
                 let Insn { opcode, operands } = &self.insns[insn_id.0];
                 write!(f, "    {insn_id} = {:?}", opcode)?;
