@@ -5,6 +5,7 @@ use std::collections::{HashMap, BTreeMap};
 use std::collections::VecDeque;
 use bit_set::BitSet;
 use smallvec::{smallvec, SmallVec};
+use smallstr::SmallString;
 
 // ===== Begin matklad string interning =====
 
@@ -72,9 +73,11 @@ struct Lexer<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
 }
 
+type IdentString = SmallString::<[u8; 7]>;
+
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
-    Ident(String),
+    Ident(IdentString),
     Print,
     Str(String),
     Int(i64),
@@ -183,7 +186,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_ident(&mut self, c: char) -> Result<Token, LexError> {
-        let mut result: String = "".into();
+        let mut result: IdentString = "".into();
         result.push(c);
         loop {
             match self.chars.peek() {
@@ -672,16 +675,12 @@ enum Assoc {
 impl Program {
     fn new() -> Program {
         let mut result = Program { entry: FunId(0), funs: vec![Function::new(NameId(0))], interner: Default::default() };
-        let name = result.intern_str("<toplevel>");
+        let name = result.intern("<toplevel>");
         result.funs[0].name = name;
         result
     }
 
-    fn intern(&mut self, name: String) -> NameId {
-        self.interner.intern(&name)
-    }
-
-    fn intern_str(&mut self, name: &str) -> NameId {
+    fn intern(&mut self, name: &str) -> NameId {
         self.interner.intern(name)
     }
 
@@ -824,7 +823,7 @@ impl Parser<'_> {
 
     fn expect_ident(&mut self) -> Result<NameId, ParseError> {
         match self.tokens.next() {
-            Some(Token::Ident(name)) => Ok(self.prog.intern(name)),
+            Some(Token::Ident(name)) => Ok(self.prog.intern(&name)),
             None => Err(ParseError::UnexpectedEof),
             Some(actual) => Err(ParseError::UnexpectedToken(actual)),
         }
@@ -879,14 +878,14 @@ impl Parser<'_> {
         // TODO(max): We need a way to find out if a variable is from an outer context (global,
         // closure) when using it so we don't bake in the value at compile-time.
         let mut func_env = Env::from_parent(fun, &env);
-        let this_name = self.prog.intern_str("this");
+        let this_name = self.prog.intern("this");
         let offset = func_env.define(this_name);
         let this = self.push_op(Opcode::This);
         self.write_local(offset, this);
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
-                    let name = self.prog.intern_str(name);
+                    let name = self.prog.intern(name);
                     let param = self.push_op(Opcode::Param(idx));
                     let offset = func_env.define(name);
                     self.write_local(offset, param);
@@ -1034,7 +1033,7 @@ impl Parser<'_> {
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
-                    let name = self.prog.intern_str(name);
+                    let name = self.prog.intern(name);
                     let param = self.push_op(Opcode::Param(idx));
                     let offset = func_env.define(name);
                     self.write_local(offset, param);
@@ -1121,7 +1120,7 @@ impl Parser<'_> {
                 LValue::Insn(self.push_op(Opcode::Const(Value::Str(value))))
             }
             Some(Token::Ident(name)) => {
-                let result = LValue::Name(self.prog.intern_str(name));
+                let result = LValue::Name(self.prog.intern(name));
                 self.tokens.next();
                 result
             }

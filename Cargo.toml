@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 bit-set = "0.8.0"
+smallstr = "0.3.0"
 
 [dependencies.smallvec]
 version = "1.14.0"
