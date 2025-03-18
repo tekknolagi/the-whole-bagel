@@ -509,6 +509,7 @@ impl Function {
             Opcode::LoadAttr(_) => true,
             Opcode::StoreAttr(_) => true,
             Opcode::GuardInt => true,
+            Opcode::GuardBool => true,
             Opcode::NewClass(_) => false,
             Opcode::This => false,
             Opcode::NewClosure(_) => false,
@@ -646,6 +647,7 @@ enum Opcode {
     LoadAttr(NameId),
     StoreAttr(NameId),
     GuardInt,
+    GuardBool,
     This,
     Call(InsnId),
 }
@@ -948,6 +950,7 @@ impl Parser<'_> {
                 self.tokens.next();
                 self.expect(Token::LParen)?;
                 let cond = self.parse_expression(&mut env)?;
+                let cond = self.push_insn(Opcode::GuardBool, smallvec![cond]);
                 self.expect(Token::RParen)?;
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
@@ -980,6 +983,7 @@ impl Parser<'_> {
                 self.push_op(Opcode::Branch(header_block));
                 self.enter_block(header_block);
                 let cond = self.parse_expression(&mut env)?;
+                let cond = self.push_insn(Opcode::GuardBool, smallvec![cond]);
                 self.expect(Token::RParen)?;
                 let body_block = self.new_block();
                 let after_block = self.new_block();
@@ -1189,6 +1193,7 @@ impl Parser<'_> {
             } else if token == Token::Or {
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
+                let lhs_value = self.push_insn(Opcode::GuardBool, smallvec![lhs_value]);
                 self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![lhs_value.clone()]);
                 self.enter_block(iffalse_block);
                 let rhs = self.parse_(&mut env, next_prec)?;
@@ -1651,23 +1656,24 @@ print a;
                 v1 = Const(Int(1))
                 v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = CondBranch(bb1, bb2) v3
+                v4 = GuardBool v3
+                v5 = CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v7 = Const(Int(4))
-                v8 = Store(@0) v0, v7
-                v9 = Branch(bb3)
-              }
-              bb1 {
-                v5 = Const(Int(3))
-                v6 = Store(@0) v0, v5
+                v8 = Const(Int(4))
+                v9 = Store(@0) v0, v8
                 v10 = Branch(bb3)
               }
+              bb1 {
+                v6 = Const(Int(3))
+                v7 = Store(@0) v0, v6
+                v11 = Branch(bb3)
+              }
               bb3 {
-                v11 = Load(@0) v0
-                v12 = Print v11
-                v13 = Const(Nil)
-                v14 = Return v13
+                v12 = Load(@0) v0
+                v13 = Print v12
+                v14 = Const(Nil)
+                v15 = Return v14
               }
             }
         "#]])
@@ -1685,14 +1691,15 @@ print a;
               }
               bb1 {
                 v2 = Const(Bool(true))
-                v3 = CondBranch(bb2, bb3) v2
+                v3 = GuardBool v2
+                v4 = CondBranch(bb2, bb3) v3
               }
               bb3 {
-                v5 = Const(Nil)
-                v6 = Return v5
+                v6 = Const(Nil)
+                v7 = Return v6
               }
               bb2 {
-                v4 = Branch(bb1)
+                v5 = Branch(bb1)
               }
             }
         "#]]);
@@ -1710,16 +1717,17 @@ print a;
               }
               bb1 {
                 v2 = Const(Bool(true))
-                v3 = CondBranch(bb2, bb3) v2
+                v3 = GuardBool v2
+                v4 = CondBranch(bb2, bb3) v3
               }
               bb3 {
-                v7 = Const(Nil)
-                v8 = Return v7
+                v8 = Const(Nil)
+                v9 = Return v8
               }
               bb2 {
-                v4 = Const(Int(1))
-                v5 = Print v4
-                v6 = Branch(bb1)
+                v5 = Const(Int(1))
+                v6 = Print v5
+                v7 = Branch(bb1)
               }
             }
         "#]]);
@@ -1745,16 +1753,17 @@ print a;
                 v6 = GuardInt v4
                 v7 = GuardInt v5
                 v8 = Less v6, v7
-                v9 = CondBranch(bb2, bb3) v8
+                v9 = GuardBool v8
+                v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v13 = Const(Nil)
-                v14 = Return v13
+                v14 = Const(Nil)
+                v15 = Return v14
               }
               bb2 {
-                v10 = Load(@0) v0
-                v11 = Print v10
-                v12 = Branch(bb1)
+                v11 = Load(@0) v0
+                v12 = Print v11
+                v13 = Branch(bb1)
               }
             }
         "#]]);
@@ -1780,22 +1789,23 @@ print a;
                 v6 = GuardInt v4
                 v7 = GuardInt v5
                 v8 = Less v6, v7
-                v9 = CondBranch(bb2, bb3) v8
+                v9 = GuardBool v8
+                v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v19 = Const(Nil)
-                v20 = Return v19
+                v20 = Const(Nil)
+                v21 = Return v20
               }
               bb2 {
-                v10 = Load(@0) v0
-                v11 = Print v10
-                v12 = Load(@0) v0
-                v13 = Const(Int(1))
-                v14 = GuardInt v12
+                v11 = Load(@0) v0
+                v12 = Print v11
+                v13 = Load(@0) v0
+                v14 = Const(Int(1))
                 v15 = GuardInt v13
-                v16 = Add v14, v15
-                v17 = Store(@0) v0, v16
-                v18 = Branch(bb1)
+                v16 = GuardInt v14
+                v17 = Add v15, v16
+                v18 = Store(@0) v0, v17
+                v19 = Branch(bb1)
               }
             }
         "#]]);
@@ -2612,23 +2622,24 @@ print a;",
                 v1 = Const(Int(1))
                 v2 = Store(@0) v0, v1
                 v3 = Const(Int(2))
-                v4 = CondBranch(bb1, bb2) v3
+                v4 = GuardBool v3
+                v5 = CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v7 = Const(Int(4))
-                v8 = Store(@0) v0, v7
-                v9 = Branch(bb3)
-              }
-              bb1 {
-                v5 = Const(Int(3))
-                v6 = Store(@0) v0, v5
+                v8 = Const(Int(4))
+                v9 = Store(@0) v0, v8
                 v10 = Branch(bb3)
               }
+              bb1 {
+                v6 = Const(Int(3))
+                v7 = Store(@0) v0, v6
+                v11 = Branch(bb3)
+              }
               bb3 {
-                v15 = Phi v5, v7
-                v12 = Print v15
-                v13 = Const(Nil)
-                v14 = Return v13
+                v16 = Phi v6, v8
+                v13 = Print v16
+                v14 = Const(Nil)
+                v15 = Return v14
               }
             }
         "#]])
@@ -2649,27 +2660,28 @@ print a;",
                 v3 = Branch(bb1)
               }
               bb1 {
-                v21 = Phi v1, v16
+                v22 = Phi v1, v17
                 v5 = Const(Int(10))
-                v6 = GuardInt v21
+                v6 = GuardInt v22
                 v7 = GuardInt v5
                 v8 = Less v6, v7
-                v9 = CondBranch(bb2, bb3) v8
+                v9 = GuardBool v8
+                v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v19 = Const(Nil)
-                v20 = Return v19
+                v20 = Const(Nil)
+                v21 = Return v20
               }
               bb2 {
-                v22 = Phi v1, v16
-                v11 = Print v22
-                v23 = Phi v1, v16
-                v13 = Const(Int(1))
-                v14 = GuardInt v23
-                v15 = GuardInt v13
-                v16 = Add v14, v15
-                v17 = Store(@0) v0, v16
-                v18 = Branch(bb1)
+                v23 = Phi v1, v17
+                v12 = Print v23
+                v24 = Phi v1, v17
+                v14 = Const(Int(1))
+                v15 = GuardInt v24
+                v16 = GuardInt v14
+                v17 = Add v15, v16
+                v18 = Store(@0) v0, v17
+                v19 = Branch(bb1)
               }
             }
         "#]]);
