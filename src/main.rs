@@ -467,6 +467,7 @@ impl Function {
                 last_pass = true;
             }
         }
+        // TODO(max): Hash-cons phi
         for (insn_id, mut operands) in replacements {
             match operands.len() {
                 0 => panic!("Should have at least one value"),
