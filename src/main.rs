@@ -4,6 +4,7 @@
 use std::collections::{HashMap, BTreeMap};
 use std::collections::VecDeque;
 use bit_set::BitSet;
+use smallvec::{smallvec, SmallVec};
 
 // TODO(max): Set up better testing infrastructure for parse errors
 
@@ -399,12 +400,12 @@ impl Function {
         }
     }
 
-    fn succs(&self, block: BlockId) -> Vec<BlockId> {
+    fn succs(&self, block: BlockId) -> Successors {
         match self.blocks[block.0].insns.last().map(|insn| &self.insns[insn.0].opcode) {
-            Some(Opcode::Return) => vec![],
-            Some(Opcode::CondBranch(iftrue, iffalse)) => vec![*iftrue, *iffalse],
-            Some(Opcode::Branch(target)) => vec![*target],
-            _ => vec![],
+            Some(Opcode::Return) => smallvec![],
+            Some(Opcode::CondBranch(iftrue, iffalse)) => smallvec![*iftrue, *iffalse],
+            Some(Opcode::Branch(target)) => smallvec![*target],
+            _ => smallvec![],
         }
     }
 
@@ -475,7 +476,7 @@ impl Function {
                 0 => panic!("Should have at least one value"),
                 1 => self.make_equal_to(insn_id, operands.get_single()),
                 _ => {
-                    let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands: operands.as_vec() });
+                    let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands: operands.as_vec().into() });
                     self.make_equal_to(insn_id, phi);
                 }
             }
@@ -637,11 +638,13 @@ enum Opcode {
     Call(InsnId),
 }
 
+type Operands = SmallVec::<[InsnId; 2]>;
+type Successors = SmallVec::<[BlockId; 2]>;
+
 #[derive(Debug)]
 struct Insn {
     opcode: Opcode,
-    // TODO(max): Use smallvec
-    operands: Vec<InsnId>,
+    operands: Operands,
 }
 
 struct Program {
@@ -679,7 +682,7 @@ impl Program {
         fun
     }
 
-    fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Vec<InsnId>) -> InsnId {
+    fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Operands) -> InsnId {
         // TODO(max): Catch double terminators
         let result = self.funs[fun.0].new_insn(Insn { opcode, operands });
         self.funs[fun.0].blocks[block.0].insns.push(result);
@@ -757,15 +760,15 @@ impl Parser<'_> {
 
     fn enter_fun(&mut self, fun: FunId) {
         let block = self.prog.funs[fun.0].entry;
-        let frame = self.prog.push_insn(fun, block, Opcode::NewFrame, vec![]);
+        let frame = self.prog.push_insn(fun, block, Opcode::NewFrame, smallvec![]);
         self.context_stack.push(Context { fun, block, frame });
         self.enter_block(block);
     }
 
     fn leave_fun(&mut self) {
         if !self.prog.funs[self.fun().0].is_terminated(self.block()) {
-            let nil = self.push_insn(Opcode::Const(Value::Nil), vec![]);
-            self.push_insn(Opcode::Return, vec![nil]);
+            let nil = self.push_op(Opcode::Const(Value::Nil));
+            self.push_insn(Opcode::Return, smallvec![nil]);
         }
         if let Some(Context { fun, block, frame }) = self.context_stack.pop() {
         } else {
@@ -810,8 +813,12 @@ impl Parser<'_> {
         }
     }
 
-    fn push_insn(&mut self, opcode: Opcode, operands: Vec<InsnId>) -> InsnId {
+    fn push_insn(&mut self, opcode: Opcode, operands: Operands) -> InsnId {
         self.prog.push_insn(self.fun(), self.block(), opcode, operands)
+    }
+
+    fn push_op(&mut self, opcode: Opcode) -> InsnId {
+        self.prog.push_insn(self.fun(), self.block(), opcode, smallvec![])
     }
 
     fn parse_program(&mut self) -> Result<(), ParseError> {
@@ -840,7 +847,7 @@ impl Parser<'_> {
             methods.push(method);
         }
         self.expect(Token::RCurly)?;
-        let class = self.push_insn(Opcode::NewClass(ClassDef { name, methods }), vec![]);
+        let class = self.push_op(Opcode::NewClass(ClassDef { name, methods }));
         let offset = env.define(name);
         self.write_local(offset, class);
         Ok(())
@@ -857,13 +864,13 @@ impl Parser<'_> {
         let mut func_env = Env::from_parent(fun, &env);
         let this_name = self.prog.intern_str("this");
         let offset = func_env.define(this_name);
-        let this = self.push_insn(Opcode::This, vec![]);
+        let this = self.push_op(Opcode::This);
         self.write_local(offset, this);
         loop {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
                     let name = self.prog.intern_str(name);
-                    let param = self.push_insn(Opcode::Param(idx), vec![]);
+                    let param = self.push_op(Opcode::Param(idx));
                     let offset = func_env.define(name);
                     self.write_local(offset, param);
                     self.tokens.next();
@@ -899,13 +906,13 @@ impl Parser<'_> {
             Some(Token::Print) => {
                 self.tokens.next();
                 let expr = self.parse_expression(&mut env)?;
-                self.push_insn(Opcode::Print, vec![expr]);
+                self.push_insn(Opcode::Print, smallvec![expr]);
                 Ok(())
             }
             Some(Token::Return) => {
                 self.tokens.next();
                 let expr = self.parse_expression(&mut env)?;
-                self.push_insn(Opcode::Return, vec![expr]);
+                self.push_insn(Opcode::Return, smallvec![expr]);
                 Ok(())
             }
             Some(Token::Fun) => {
@@ -928,7 +935,7 @@ impl Parser<'_> {
                 self.expect(Token::RParen)?;
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
-                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![cond]);
+                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![cond]);
 
                 self.enter_block(iftrue_block);
                 let mut iftrue_env = env.clone();
@@ -941,12 +948,12 @@ impl Parser<'_> {
                     let mut iffalse_env = env.clone();
                     self.parse_statement(&mut iffalse_env)?;
                     let join_block = self.new_block();
-                    self.push_insn(Opcode::Branch(join_block), vec![]);
+                    self.push_op(Opcode::Branch(join_block));
 
                     self.enter_block(join_block);
-                    self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(join_block), vec![]);
+                    self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(join_block), smallvec![]);
                 } else {
-                    self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(iffalse_block), vec![]);
+                    self.prog.push_insn(self.fun(), iftrue_end, Opcode::Branch(iffalse_block), smallvec![]);
                 }
                 return Ok(());  // no semicolon
             }
@@ -954,17 +961,17 @@ impl Parser<'_> {
                 self.tokens.next();
                 self.expect(Token::LParen)?;
                 let header_block = self.new_block();
-                self.push_insn(Opcode::Branch(header_block), vec![]);
+                self.push_op(Opcode::Branch(header_block));
                 self.enter_block(header_block);
                 let cond = self.parse_expression(&mut env)?;
                 self.expect(Token::RParen)?;
                 let body_block = self.new_block();
                 let after_block = self.new_block();
-                self.push_insn(Opcode::CondBranch(body_block, after_block), vec![cond]);
+                self.push_insn(Opcode::CondBranch(body_block, after_block), smallvec![cond]);
                 self.enter_block(body_block);
                 let mut body_env = env.clone();
                 self.parse_statement(&mut body_env)?;
-                self.push_insn(Opcode::Branch(header_block), vec![]);
+                self.push_op(Opcode::Branch(header_block));
                 self.enter_block(after_block);
                 return Ok(());  // no semicolon
             }
@@ -988,14 +995,14 @@ impl Parser<'_> {
         let fun_id = self.fun();
         let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
         *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-        self.push_insn(Opcode::Store(offset), vec![self.frame(), value]);
+        self.push_insn(Opcode::Store(offset), smallvec![self.frame(), value]);
     }
 
     fn read_local(&mut self, offset: Offset) -> InsnId {
         let fun_id = self.fun();
         let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
         *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-        self.push_insn(Opcode::Load(offset), vec![self.frame()])
+        self.push_insn(Opcode::Load(offset), smallvec![self.frame()])
     }
 
     fn parse_function(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
@@ -1011,7 +1018,7 @@ impl Parser<'_> {
             match self.tokens.peek() {
                 Some(Token::Ident(name)) => {
                     let name = self.prog.intern_str(name);
-                    let param = self.push_insn(Opcode::Param(idx), vec![]);
+                    let param = self.push_op(Opcode::Param(idx));
                     let offset = func_env.define(name);
                     self.write_local(offset, param);
                     self.tokens.next();
@@ -1032,16 +1039,16 @@ impl Parser<'_> {
         }
         self.expect(Token::RCurly)?;
         self.leave_fun();
-        let closure = self.push_insn(Opcode::NewClosure(fun), vec![]);
+        let closure = self.push_op(Opcode::NewClosure(fun));
         let offset = env.define(name);
         self.write_local(offset, closure);
         Ok(())
     }
 
-    fn parse_args(&mut self, mut env: &mut Env) -> Result<Vec<InsnId>, ParseError> {
+    fn parse_args(&mut self, mut env: &mut Env) -> Result<Operands, ParseError> {
         // TODO(max): Come up with a better idiom to parse comma-separated lists. This is wack.
         // TODO(max): Disallow f(x,)
-        let mut result = vec![];
+        let mut result = smallvec![];
         loop {
             match self.tokens.peek() {
                 Some(Token::RParen) => break,
@@ -1066,22 +1073,22 @@ impl Parser<'_> {
             None => Err(ParseError::UnexpectedEof),
             Some(Token::Nil) => {
                 self.tokens.next();
-                Ok(self.push_insn(Opcode::Const(Value::Nil), vec![]))
+                Ok(self.push_op(Opcode::Const(Value::Nil)))
             }
             Some(Token::Bool(value)) => {
                 let value = value.clone();
                 self.tokens.next();
-                Ok(self.push_insn(Opcode::Const(Value::Bool(value)), vec![]))
+                Ok(self.push_op(Opcode::Const(Value::Bool(value))))
             }
             Some(Token::Int(value)) => {
                 let value = value.clone();
                 self.tokens.next();
-                Ok(self.push_insn(Opcode::Const(Value::Int(value)), vec![]))
+                Ok(self.push_op(Opcode::Const(Value::Int(value))))
             }
             Some(Token::Str(value)) => {
                 let value = value.clone();
                 self.tokens.next();
-                Ok(self.push_insn(Opcode::Const(Value::Str(value)), vec![]))
+                Ok(self.push_op(Opcode::Const(Value::Str(value))))
             }
             Some(Token::Ident(name)) => {
                 let name_str = name.clone();
@@ -1140,12 +1147,12 @@ impl Parser<'_> {
             } else if token == Token::Or {
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
-                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), vec![lhs.clone()]);
+                self.push_insn(Opcode::CondBranch(iftrue_block, iffalse_block), smallvec![lhs.clone()]);
                 self.enter_block(iffalse_block);
                 let rhs = self.parse_(&mut env, next_prec)?;
-                self.push_insn(Opcode::Branch(iftrue_block), vec![]);
+                self.push_op(Opcode::Branch(iftrue_block));
                 self.enter_block(iftrue_block);
-                lhs = self.push_insn(Opcode::Phi, vec![lhs, rhs])
+                lhs = self.push_insn(Opcode::Phi, smallvec![lhs, rhs])
             } else if token == Token::LParen {
                 // Function call
                 let operands = self.parse_args(&mut env)?;
@@ -1167,10 +1174,10 @@ impl Parser<'_> {
                 };
                 let mut rhs = self.parse_(&mut env, next_prec)?;
                 if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
-                    lhs = self.push_insn(Opcode::GuardInt, vec![lhs]);
-                    rhs = self.push_insn(Opcode::GuardInt, vec![rhs]);
+                    lhs = self.push_insn(Opcode::GuardInt, smallvec![lhs]);
+                    rhs = self.push_insn(Opcode::GuardInt, smallvec![rhs]);
                 }
-                lhs = self.push_insn(opcode, vec![lhs, rhs]);
+                lhs = self.push_insn(opcode, smallvec![lhs, rhs]);
             }
         }
         Ok(lhs)

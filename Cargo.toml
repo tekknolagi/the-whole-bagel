@@ -6,5 +6,9 @@ edition = "2021"
 [dependencies]
 bit-set = "0.8.0"
 
+[dependencies.smallvec]
+version = "1.14.0"
+features = ["union"]
+
 [dev-dependencies]
 expect-test = "1.5"
