@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![allow(unused_mut)]
-#![allow(unused_variables)]
 use std::collections::{HashMap, BTreeMap};
 use std::collections::VecDeque;
 use bit_set::BitSet;
@@ -788,7 +787,7 @@ impl Parser<'_> {
             let nil = self.push_op(Opcode::Const(Value::Nil));
             self.push_insn(Opcode::Return, smallvec![nil]);
         }
-        if let Some(Context { fun, block, frame }) = self.context_stack.pop() {
+        if let Some(Context { .. }) = self.context_stack.pop() {
         } else {
             panic!("Function stack underflow");
         }
@@ -842,7 +841,7 @@ impl Parser<'_> {
     fn parse_program(&mut self) -> Result<(), ParseError> {
         self.enter_fun(self.prog.entry);
         let mut env = Env::new(self.prog.entry);
-        while let Some(token) = self.tokens.peek() {
+        while let Some(_) = self.tokens.peek() {
             self.parse_toplevel(&mut env)?;
         }
         self.leave_fun();
@@ -1005,7 +1004,7 @@ impl Parser<'_> {
                 }
                 return self.expect(Token::RCurly);  // no semicolon
             }
-            Some(token) => { self.parse_expression(&mut env)?; Ok(()) },
+            Some(_) => { self.parse_expression(&mut env)?; Ok(()) },
             None => { Err(ParseError::UnexpectedEof) }
         }?;
         self.expect(Token::Semicolon)
