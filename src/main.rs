@@ -1188,7 +1188,8 @@ impl Parser<'_> {
             let mut lhs_value = self.lvalue_as_rvalue(env, lhs)?;
             if token == Token::And {
                 todo!("ssa from `and' keyword")
-            } else if token == Token::Or {
+            }
+            if token == Token::Or {
                 let iftrue_block = self.new_block();
                 let iffalse_block = self.new_block();
                 let lhs_truthy = self.push_insn(Opcode::IsTruthy, smallvec![lhs_value]);
@@ -1197,34 +1198,36 @@ impl Parser<'_> {
                 let rhs = self.parse_(&mut env, next_prec)?;
                 self.push_op(Opcode::Branch(iftrue_block));
                 self.enter_block(iftrue_block);
-                lhs = LValue::Insn(self.push_insn(Opcode::Phi, smallvec![lhs_value, rhs]))
-            } else if token == Token::LParen {
+                lhs = LValue::Insn(self.push_insn(Opcode::Phi, smallvec![lhs_value, rhs]));
+                continue;
+            }
+            if token == Token::LParen {
                 // Function call
                 let operands = self.parse_args(&mut env)?;
                 self.expect(Token::RParen)?;
-                lhs = LValue::Insn(self.push_insn(Opcode::Call(lhs_value), operands))
-            } else {
-                let opcode = match token {
-                    Token::EqualEqual => Opcode::Equal,
-                    Token::BangEqual => Opcode::NotEqual,
-                    Token::Greater => Opcode::Greater,
-                    Token::GreaterEqual => Opcode::GreaterEqual,
-                    Token::Less => Opcode::Less,
-                    Token::LessEqual => Opcode::LessEqual,
-                    Token::Plus => Opcode::Add,
-                    Token::Minus => Opcode::Sub,
-                    Token::Star => Opcode::Mul,
-                    Token::ForwardSlash => Opcode::Div,
-                    _ => panic!("Unexpected token {token:?}"),
-                };
-                let mut rhs = self.parse_(&mut env, next_prec)?;
-                if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
-                    // TODO(max): Don't guard; string+string is valid too
-                    lhs_value = self.push_insn(Opcode::GuardInt, smallvec![lhs_value]);
-                    rhs = self.push_insn(Opcode::GuardInt, smallvec![rhs]);
-                }
-                lhs = LValue::Insn(self.push_insn(opcode, smallvec![lhs_value, rhs]));
+                lhs = LValue::Insn(self.push_insn(Opcode::Call(lhs_value), operands));
+                continue;
             }
+            let opcode = match token {
+                Token::EqualEqual => Opcode::Equal,
+                Token::BangEqual => Opcode::NotEqual,
+                Token::Greater => Opcode::Greater,
+                Token::GreaterEqual => Opcode::GreaterEqual,
+                Token::Less => Opcode::Less,
+                Token::LessEqual => Opcode::LessEqual,
+                Token::Plus => Opcode::Add,
+                Token::Minus => Opcode::Sub,
+                Token::Star => Opcode::Mul,
+                Token::ForwardSlash => Opcode::Div,
+                _ => panic!("Unexpected token {token:?}"),
+            };
+            let mut rhs = self.parse_(&mut env, next_prec)?;
+            if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
+                // TODO(max): Don't guard; string+string is valid too
+                lhs_value = self.push_insn(Opcode::GuardInt, smallvec![lhs_value]);
+                rhs = self.push_insn(Opcode::GuardInt, smallvec![rhs]);
+            }
+            lhs = LValue::Insn(self.push_insn(opcode, smallvec![lhs_value, rhs]));
         }
         self.lvalue_as_rvalue(env, lhs)
     }
