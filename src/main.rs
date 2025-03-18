@@ -134,7 +134,7 @@ impl<'a> Lexer<'a> {
             match self.chars.next() {
                 None => { return Err(LexError::Eof); }
                 Some(c) if c.is_whitespace() => { continue; }
-                Some(c) if c.is_alphabetic() => { return self.read_ident(c); }
+                Some(c) if c.is_alphabetic() || c == '_' => { return self.read_ident(c); }
                 Some(c) if c.is_digit(NUMBER_BASE) => { return self.read_int(c.to_digit(NUMBER_BASE).unwrap() as i64); }
                 Some('"') => { return self.read_string(); }
                 Some(';') => { return Ok(Token::Semicolon); }
@@ -1338,10 +1338,11 @@ mod lexer_tests {
         check("abc123", expect![[r#"[Ident("abc123")]"#]])
     }
 
-    // #[test]
-    // fn test_ident_underscore() {
-    //     check("_", expect!["[]"])
-    // }
+    #[test]
+    fn test_ident_underscore() {
+        check("_", expect![r#"[Ident("_")]"#]);
+        check("__", expect![r#"[Ident("__")]"#])
+    }
 
     #[test]
     fn test_if() {
