@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused_mut)]
 #![allow(unused_variables)]
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::collections::VecDeque;
 use bit_set::BitSet;
 
@@ -434,7 +434,7 @@ impl Function {
         }
         let empty_state = vec![InsnSet::new(); self.num_locals];
         let mut block_entry = vec![empty_state.clone(); self.blocks.len()];
-        let mut replacements: HashMap<InsnId, InsnSet> = HashMap::new();
+        let mut replacements: BTreeMap<InsnId, InsnSet> = BTreeMap::new();
         let mut last_pass = false;
         loop {
             let mut changed = false;
