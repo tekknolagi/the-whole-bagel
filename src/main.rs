@@ -342,12 +342,13 @@ mod hir {
 
     #[derive(Debug)]
     struct Block {
+        phis: Vec<InsnId>,
         insns: Vec<InsnId>,
     }
 
     impl Block {
         fn new() -> Block {
-            Block { insns: vec![] }
+            Block { phis: vec![], insns: vec![] }
         }
     }
 
@@ -648,7 +649,8 @@ mod hir {
             let mut seen = InsnSet::new();
             for block_id in fun.rpo() {
                 writeln!(f, "  {block_id} {{")?;
-                for insn_id in &fun.blocks[block_id.0].insns {
+                let block = &fun.blocks[block_id.0];
+                for insn_id in block.phis.iter().chain(&block.insns) {
                     let insn_id = fun.find(*insn_id);
                     if seen.contains(insn_id) { continue; }
                     seen.insert(insn_id);
@@ -691,14 +693,14 @@ mod hir {
         ObjectClass,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     struct ClassDef {
         name: NameId,
         superclass: InsnId,
         methods: Vec<FunId>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq)]
     enum Opcode {
         Const(Value),
         Abort,
@@ -774,9 +776,14 @@ mod hir {
         }
 
         fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Operands) -> InsnId {
-            // TODO(max): Catch double terminators
+            let is_phi = opcode == Opcode::Phi;
             let result = self.funs[fun.0].new_insn(Insn { opcode, operands });
-            self.funs[fun.0].blocks[block.0].insns.push(result);
+            if is_phi {
+                self.funs[fun.0].blocks[block.0].phis.push(result);
+            } else {
+                // TODO(max): Catch double terminators
+                self.funs[fun.0].blocks[block.0].insns.push(result);
+            }
             result
         }
     }
