@@ -129,6 +129,10 @@ impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T> {
         assert_eq!(self.len(), 1);
         self.set.iter().next().unwrap().into()
     }
+
+    pub fn iter<'a>(&self) -> impl Iterator<Item = T> + '_ {
+        self.set.iter().map(|idx| idx.into())
+    }
 }
 
 mod hir {
@@ -550,6 +554,77 @@ mod hir {
                 }
                 self.blocks[block_id.0].insns = new_block;
             }
+        }
+    }
+
+    struct Dominators {
+        idom: HashMap<BlockId, BlockId>,
+        df: HashMap<BlockId, BlockSet>,
+    }
+
+    impl Dominators {
+        // From "A Simple, Fast Dominance Algorithm" by Keith D. Cooper, Timothy J. Harvey, and Ken Kennedy
+        fn new(fun: &Function) -> Self {
+            // All nodes start as Undefined because the HashMap is empty
+            let mut idom: HashMap<BlockId, BlockId> = HashMap::new();
+            idom.insert(fun.entry, fun.entry);
+            let rpo = fun.rpo();
+            // Compute preds
+            let mut preds: HashMap<BlockId, BlockSet> = HashMap::new();
+            for block_id in &rpo {
+                for succ in fun.succs(*block_id) {
+                    preds.entry(succ)
+                        .and_modify(|succ_preds| { succ_preds.insert(*block_id); })
+                        .or_insert_with(|| BlockSet::one(*block_id));
+                }
+            }
+            // Compute immediate dominators
+            assert_eq!(rpo[0], fun.entry);
+            let mut changed = true;
+            while changed {
+                changed = false;
+                // Skip the entry (it's in rpo[0]; see above)
+                for block_id in &rpo[1..] {
+                    // Find the first processed predecessor
+                    let first_processed = preds[block_id].iter().take_while(|p| !idom.contains_key(p)).next().unwrap();
+                    let mut new_idom = first_processed;
+                    // For all other predecessors with an entry in idom
+                    for pred in preds[block_id].iter().filter(|p| *p != first_processed && idom.contains_key(p)) {
+                        // Intersect pred, new_idom
+                        let mut finger1 = pred;
+                        let mut finger2 = new_idom;
+                        while finger1 != finger2 {
+                            while finger1 < finger2 {
+                                finger1 = idom[&finger1];
+                            }
+                            while finger2 < finger1 {
+                                finger2 = idom[&finger2];
+                            }
+                        }
+                        new_idom = finger1;
+                    }
+                    if idom[block_id] != new_idom {
+                        idom.insert(*block_id, new_idom);
+                        changed = true;
+                    }
+                }
+            }
+            // Compute dominance frontiers
+            let mut df: HashMap<BlockId, BlockSet> = HashMap::new();
+            for block_id in &rpo {
+                if preds[block_id].len() >= 2 {
+                    for pred in preds[block_id].iter() {
+                        let mut runner = pred;
+                        while runner != idom[block_id] {
+                            df.entry(runner)
+                                .and_modify(|df| { df.insert(*block_id); })
+                                .or_insert_with(|| BlockSet::one(*block_id));
+                            runner = idom[&runner];
+                        }
+                    }
+                }
+            }
+            Self { idom, df }
         }
     }
 
