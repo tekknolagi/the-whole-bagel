@@ -40,6 +40,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
 
 [[package]]
+name = "qbe"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9c7d071fcb0b97b2265d239c993e43e4d6ff2d035445dca986578b553d87b6"
+
+[[package]]
 name = "smallstr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -60,6 +66,7 @@ version = "0.1.0"
 dependencies = [
  "bit-set",
  "expect-test",
+ "qbe",
  "smallstr",
  "smallvec",
 ]

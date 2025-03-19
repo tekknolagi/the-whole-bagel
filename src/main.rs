@@ -10,6 +10,11 @@ macro_rules! define_id_type {
         impl From<usize> for $name { fn from(id: usize) -> Self { $name(id) } }
         impl From<$name> for usize { fn from(id: $name) -> Self { id.0 } }
 
+        impl $name {
+            pub fn as_usize(self) -> usize { self.0 }
+            pub fn as_u64(self) -> u64 { self.0.try_into().unwrap() }
+        }
+
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
                 write!(f, "{}{}", $prefix, self.0)
@@ -341,7 +346,7 @@ mod hir {
     type BlockSet = TypedBitSet<BlockId>;
 
     #[derive(Debug)]
-    struct Block {
+    pub struct Block {
         phis: Vec<InsnId>,
         insns: Vec<InsnId>,
     }
@@ -354,7 +359,7 @@ mod hir {
 
     #[derive(Debug)]
     pub struct Function {
-        name: NameId,
+        pub name: NameId,
         entry: BlockId,
         params: Vec<InsnId>,
         insns: Vec<Insn>,
@@ -381,6 +386,14 @@ mod hir {
         fn make_equal_to(&mut self, left: InsnId, right: InsnId) {
             let found = self.find(left);
             self.insns[found.0] = Insn { opcode: Opcode::Identity, operands: smallvec![right] };
+        }
+
+        pub fn block(&self, id: BlockId) -> &Block {
+            &self.blocks[id.0]
+        }
+
+        pub fn insn(&self, id: InsnId) -> &Insn {
+            &self.insns[id.0]
         }
 
         fn new_block(&mut self) -> BlockId {
@@ -429,7 +442,7 @@ mod hir {
             }
         }
 
-        fn rpo(&self) -> Vec<BlockId> {
+        pub fn rpo(&self) -> Vec<BlockId> {
             let mut visited = BlockSet::new();
             let mut result = vec![];
             self.po_from(self.entry, &mut result, &mut visited);
@@ -724,7 +737,7 @@ mod hir {
     }
 
     #[derive(Debug, PartialEq, Clone)]
-    enum Value {
+    pub enum Value {
         Nil,
         Int(i64),
         Float(f64),
@@ -734,14 +747,14 @@ mod hir {
     }
 
     #[derive(Debug, PartialEq)]
-    struct ClassDef {
+    pub struct ClassDef {
         name: NameId,
         superclass: InsnId,
         methods: Vec<FunId>,
     }
 
     #[derive(Debug, PartialEq)]
-    enum Opcode {
+    pub enum Opcode {
         Identity,
         Const(Value),
         Abort,
@@ -780,9 +793,9 @@ mod hir {
     type Successors = SmallVec::<[BlockId; 2]>;
 
     #[derive(Debug)]
-    struct Insn {
-        opcode: Opcode,
-        operands: Operands,
+    pub struct Insn {
+        pub opcode: Opcode,
+        pub operands: Operands,
     }
 
     pub struct Program {
@@ -809,6 +822,10 @@ mod hir {
 
         fn intern(&mut self, name: &str) -> NameId {
             self.interner.intern(name)
+        }
+
+        pub fn name(&self, name: NameId) -> &str {
+            self.interner.lookup(name)
         }
 
         fn push_fun(&mut self, name: NameId) -> FunId {
@@ -1360,8 +1377,7 @@ mod hir {
                     _ => panic!("Unexpected token {token:?}"),
                 };
                 let mut rhs = self.parse_(&mut env, next_prec)?;
-                if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
-                    // TODO(max): Don't guard; string+string is valid too
+                if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual) {
                     lhs_value = self.push_insn(Opcode::GuardInt, smallvec![lhs_value]);
                     rhs = self.push_insn(Opcode::GuardInt, smallvec![rhs]);
                 }
@@ -1393,6 +1409,93 @@ mod runtime {
         fn twb_as_heap_object(obj: Object) -> *const HeapObject;
         fn twb_as_int_object(obj: Object) -> *const IntObject;
         fn twb_print(obj: Object) -> std::ffi::c_void;
+    }
+}
+
+mod lir {
+    use crate::hir;
+    use qbe;
+
+    pub struct Generator<'a> {
+        hir_program: &'a hir::Program,
+        pub module: qbe::Module<'a>,
+        next_lir_temp: usize,
+    }
+
+    impl<'a> Generator<'a> {
+        pub fn from_hir(hir_program: &'a hir::Program) -> Self {
+            Self { hir_program, module: qbe::Module::new(), next_lir_temp: 0 }
+        }
+
+        fn lir_temp(&mut self) -> qbe::Value {
+            let id = self.next_lir_temp;
+            self.next_lir_temp += 1;
+            qbe::Value::Temporary(format!("l{id}"))
+        }
+
+        pub fn compile(&mut self) {
+            for hir_fun in &self.hir_program.funs {
+                self.compile_fun(hir_fun);
+            }
+        }
+
+        pub fn compile_fun(&mut self, hir_fun: &hir::Function) {
+            let name = self.hir_program.name(hir_fun.name);
+            let mut fun = qbe::Function::new(qbe::Linkage::public(), name, vec![], None);
+            for block_id in hir_fun.rpo() {
+                let mut block = fun.add_block(format!("{block_id}"));
+                let hir_block = hir_fun.block(block_id);
+                for insn_id in &hir_block.insns {
+                    self.compile_insn(&mut block, hir_fun, *insn_id);
+                }
+            }
+            self.module.add_function(fun);
+        }
+
+        fn as_value(&self, hir_fun: &hir::Function, insn_id: hir::InsnId) -> qbe::Value {
+            let insn = hir_fun.insn(insn_id);
+            match (&insn.opcode, insn.operands.as_slice()) {
+                (hir::Opcode::Const(hir::Value::Int(val)), []) => qbe::Value::Const(*val as u64),
+                (hir::Opcode::Const(hir::Value::Nil), []) => qbe::Value::Const(0),
+                (hir::Opcode::Const(val), []) => todo!("as_value const {val:?}"),
+                _ => qbe::Value::Temporary(format!("{insn_id}")),
+            }
+        }
+
+        pub fn compile_insn(&mut self, block: &mut qbe::Block, hir_fun: &hir::Function, insn_id: hir::InsnId) {
+            let insn = hir_fun.insn(insn_id);
+            match (&insn.opcode, insn.operands.as_slice()) {
+                (hir::Opcode::Const(_), []) => {},
+                (hir::Opcode::NewFrame, []) => {},
+                (hir::Opcode::Return, [operand]) => block.add_instr(qbe::Instr::Ret(Some(self.as_value(hir_fun, *operand)))),
+                (hir::Opcode::Add, [left, right]) => {
+                    let callee = "twb_add".into();
+                    let args = vec![
+                        (qbe::Type::Word, self.as_value(hir_fun, *left)),
+                        (qbe::Type::Word, self.as_value(hir_fun, *right)),
+                    ];
+                    // TODO(max): Find out what the Option<u64> is for
+                    block.assign_instr(self.as_value(hir_fun, insn_id), qbe::Type::Word, qbe::Instr::Call(callee, args, None));
+                }
+                (hir::Opcode::Store(offset), [base, src]) => {
+                    let addr = self.lir_temp();
+                    block.assign_instr(addr.clone(), qbe::Type::Word, qbe::Instr::Add(self.as_value(hir_fun, *base), qbe::Value::Const(offset.as_u64())));
+                    block.add_instr(qbe::Instr::Store(qbe::Type::Word, addr, self.as_value(hir_fun, *src)));
+                }
+                (hir::Opcode::Load(offset), [base]) => {
+                    let addr = self.lir_temp();
+                    block.assign_instr(addr.clone(), qbe::Type::Word, qbe::Instr::Add(self.as_value(hir_fun, *base), qbe::Value::Const(offset.as_u64())));
+                    block.assign_instr(self.as_value(hir_fun, insn_id), qbe::Type::Word, qbe::Instr::Load(qbe::Type::Word, addr));
+                }
+                (hir::Opcode::Print, [operand]) => {
+                    let callee = "twb_print".into();
+                    let args = vec![(qbe::Type::Word, self.as_value(hir_fun, *operand))];
+                    // TODO(max): Find out what the Option<u64> is for
+                    block.assign_instr(self.as_value(hir_fun, insn_id), qbe::Type::Word, qbe::Instr::Call(callee, args, None));
+                }
+                (opcode, _) => todo!("lower {opcode:?}")
+            }
+        }
     }
 }
 
@@ -1637,15 +1740,11 @@ mod parser_tests {
                 v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
-                v3 = GuardInt v1
-                v4 = GuardInt v2
-                v5 = Mul v3, v4
-                v6 = Const(Int(3))
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = Const(Nil)
-                v11 = Return v10
+                v3 = Mul v1, v2
+                v4 = Const(Int(3))
+                v5 = Add v3, v4
+                v6 = Const(Nil)
+                v7 = Return v6
               }
             }
         "#]])
@@ -1661,14 +1760,10 @@ mod parser_tests {
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
                 v3 = Const(Int(3))
-                v4 = GuardInt v2
-                v5 = GuardInt v3
-                v6 = Mul v4, v5
-                v7 = GuardInt v1
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = Const(Nil)
-                v11 = Return v10
+                v4 = Mul v2, v3
+                v5 = Add v1, v4
+                v6 = Const(Nil)
+                v7 = Return v6
               }
             }
         "#]])
@@ -1683,11 +1778,9 @@ mod parser_tests {
                 v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
-                v3 = GuardInt v1
-                v4 = GuardInt v2
-                v5 = Add v3, v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v3 = Add v1, v2
+                v4 = Const(Nil)
+                v5 = Return v4
               }
             }
         "#]])
@@ -1763,11 +1856,9 @@ mod parser_tests {
         v0 = NewFrame
         v1 = Const(Int(1))
         v2 = Const(Int(2))
-        v3 = GuardInt v1
-        v4 = GuardInt v2
-        v5 = Add v3, v4
-        v6 = Const(Nil)
-        v7 = Return v6
+        v3 = Add v1, v2
+        v4 = Const(Nil)
+        v5 = Return v4
       }
     }
 "#]])
@@ -1782,12 +1873,10 @@ mod parser_tests {
                 v0 = NewFrame
                 v1 = Const(Int(1))
                 v2 = Const(Int(2))
-                v3 = GuardInt v1
-                v4 = GuardInt v2
-                v5 = Add v3, v4
-                v6 = Print v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v3 = Add v1, v2
+                v4 = Print v3
+                v5 = Const(Nil)
+                v6 = Return v5
               }
             }
         "#]])
@@ -1847,7 +1936,7 @@ print a;",
     fn test_assign_non_lvalue() {
         check_error("1 = 2;", expect!["Err(CannotAssignTo(Insn(v1)))"]);
         check_error("var a = 1; (a) = 2;", expect!["Err(CannotAssignTo(Insn(v3)))"]);
-        check_error("var a = 1; (a+a) = 2;", expect!["Err(CannotAssignTo(Insn(v7)))"]);
+        check_error("var a = 1; (a+a) = 2;", expect!["Err(CannotAssignTo(Insn(v5)))"]);
         check_error("class Foo { Foo() { this = 1; } }", expect!["Err(CannotAssignToThis)"]);
         check_error("undefined = 1;", expect![[r#"Err(UnboundName("undefined"))"#]]);
     }
@@ -2113,20 +2202,18 @@ print a;
                 v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v21 = Const(Nil)
-                v22 = Return v21
+                v19 = Const(Nil)
+                v20 = Return v19
               }
               bb2 {
                 v11 = Load(@0) v0
                 v12 = Print v11
                 v13 = Load(@0) v0
                 v14 = Const(Int(1))
-                v15 = GuardInt v13
-                v16 = GuardInt v14
-                v17 = Add v15, v16
-                v18 = Store(@0) v0, v17
-                v19 = Load(@0) v0
-                v20 = Branch(bb1)
+                v15 = Add v13, v14
+                v16 = Store(@0) v0, v15
+                v17 = Load(@0) v0
+                v18 = Branch(bb1)
               }
             }
         "#]]);
@@ -2250,10 +2337,8 @@ print a;
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Const(Int(1))
-                v5 = GuardInt v3
-                v6 = GuardInt v4
-                v7 = Add v5, v6
-                v8 = Return v7
+                v5 = Add v3, v4
+                v6 = Return v5
               }
             }
         "#]])
@@ -2279,10 +2364,8 @@ print a;
                 v4 = Store(@1) v0, v3
                 v5 = Load(@0) v0
                 v6 = Load(@1) v0
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = Return v9
+                v7 = Add v5, v6
+                v8 = Return v7
               }
             }
         "#]])
@@ -2427,14 +2510,10 @@ print a;
                 v4 = Load(@0) v0
                 v5 = Call v4
                 v6 = Const(Int(2))
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = GuardInt v3
-                v11 = GuardInt v9
-                v12 = Add v10, v11
-                v13 = Const(Nil)
-                v14 = Return v13
+                v7 = Add v5, v6
+                v8 = Add v3, v7
+                v9 = Const(Nil)
+                v10 = Return v9
               }
             }
             fn1: fun f() (entry bb0) {
@@ -2463,14 +2542,10 @@ print a;
                 v4 = Load(@0) v0
                 v5 = Call v4
                 v6 = Const(Int(2))
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Mul v7, v8
-                v10 = GuardInt v3
-                v11 = GuardInt v9
-                v12 = Mul v10, v11
-                v13 = Const(Nil)
-                v14 = Return v13
+                v7 = Mul v5, v6
+                v8 = Mul v3, v7
+                v9 = Const(Nil)
+                v10 = Return v9
               }
             }
             fn1: fun f() (entry bb0) {
@@ -3224,17 +3299,17 @@ print a;",
                 v3 = Branch(bb1)
               }
               bb1 {
-                v23 = Phi v1, v17
+                v21 = Phi v1, v15
                 v5 = Const(Int(10))
-                v6 = GuardInt v23
+                v6 = GuardInt v21
                 v7 = GuardInt v5
                 v8 = Less v6, v7
                 v9 = IsTruthy v8
                 v10 = CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v21 = Const(Nil)
-                v22 = Return v21
+                v19 = Const(Nil)
+                v20 = Return v19
               }
               bb2 {
                 v12 = Print v23
@@ -3257,5 +3332,84 @@ mod runtime_tests {
     #[test]
     fn test_sizes() {
         assert_eq!(std::mem::size_of::<runtime::HeapObject>(), 8);
+    }
+}
+
+#[cfg(test)]
+mod lir_tests {
+    use crate::lir;
+    use super::hir::{Lexer, Parser};
+    use expect_test::{expect, Expect};
+
+    fn check(source: &str, expect: Expect) {
+        let mut lexer = Lexer::from_str(source);
+        let mut parser = Parser::from_lexer(&mut lexer);
+        parser.parse_program().unwrap();
+        let actual = parser.prog;
+        let mut gen = lir::Generator::from_hir(&actual);
+        gen.compile();
+        expect.assert_eq(format!("{}", gen.module).as_str());
+    }
+
+    #[test]
+    fn test_const() {
+        check("1;", expect![[r#"
+            export function $<toplevel>() {
+            @bb0
+            	ret 0
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_print() {
+        check("print 1;", expect![[r#"
+            export function $<toplevel>() {
+            @bb0
+            	%v2 =w call $twb_print(w 1)
+            	ret 0
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_add() {
+        check("print 1+2;", expect![[r#"
+            export function $<toplevel>() {
+            @bb0
+            	%v3 =w call $twb_add(w 1, w 2)
+            	%v4 =w call $twb_print(w %v3)
+            	ret 0
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_nested_add() {
+        check("print 1+2+3+4;", expect![[r#"
+            export function $<toplevel>() {
+            @bb0
+            	%v5 =w call $twb_add(w 3, w 4)
+            	%v6 =w call $twb_add(w 2, w %v5)
+            	%v7 =w call $twb_add(w 1, w %v6)
+            	%v8 =w call $twb_print(w %v7)
+            	ret 0
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_local() {
+        check("var a = 1; print a;", expect![[r#"
+            export function $<toplevel>() {
+            @bb0
+            	%l0 =w add %v0, 0
+            	storew 1, %l0
+            	%l1 =w add %v0, 0
+            	%v3 =w loadw %l1
+            	%v4 =w call $twb_print(w %v3)
+            	ret 0
+            }
+        "#]])
     }
 }
