@@ -356,6 +356,7 @@ mod hir {
     pub struct Function {
         name: NameId,
         entry: BlockId,
+        params: Vec<InsnId>,
         insns: Vec<Insn>,
         blocks: Vec<Block>,
         num_locals: usize,
@@ -363,7 +364,7 @@ mod hir {
 
     impl Function {
         fn new(name: NameId) -> Function {
-            Function { name, entry: BlockId(0), insns: vec![], blocks: vec![Block::new()], num_locals: 0 }
+            Function { name, entry: BlockId(0), insns: vec![], params: vec![], blocks: vec![Block::new()], num_locals: 0 }
         }
 
         fn find(&self, insn: InsnId) -> InsnId {
@@ -392,6 +393,12 @@ mod hir {
             let result = InsnId(self.insns.len());
             self.insns.push(insn);
             result
+        }
+
+        fn new_param(&mut self, idx: usize) -> InsnId {
+            let insn = self.new_insn(Insn { opcode: Opcode::Param(idx), operands: smallvec![] });
+            self.params.push(insn);
+            insn
         }
 
         fn push_insn(&mut self, block: BlockId, opcode: Opcode, operands: Operands) -> InsnId {
@@ -672,7 +679,13 @@ mod hir {
             let fun = self.function;
             let fun_name = self.program.interner.lookup(fun.name);
             let fun_entry = fun.entry;
-            writeln!(f, "fun {fun_name} (entry {fun_entry}) {{")?;
+            write!(f, "fun {fun_name}(")?;
+            let mut sep = "";
+            for param in &fun.params {
+                write!(f, "{sep}{:?}", fun.find(*param))?;
+                sep = ", ";
+            }
+            writeln!(f, ") (entry {fun_entry}) {{")?;
             let mut seen = InsnSet::new();
             for block_id in fun.rpo() {
                 writeln!(f, "  {block_id} {{")?;
@@ -1002,7 +1015,7 @@ mod hir {
                 match self.tokens.peek() {
                     Some(Token::Ident(name)) => {
                         let name = self.prog.intern(name);
-                        let param = self.push_op(Opcode::Param(idx));
+                        let param = self.prog.funs[fun.0].new_param(idx);
                         self.define_local(&mut func_env, name, param);
                         self.tokens.next();
                         idx += 1;
@@ -1150,7 +1163,7 @@ mod hir {
                 match self.tokens.peek() {
                     Some(Token::Ident(name)) => {
                         let name = self.prog.intern(name);
-                        let param = self.push_op(Opcode::Param(idx));
+                        let param = self.prog.funs[fun.0].new_param(idx);
                         self.define_local(&mut func_env, name, param);
                         self.tokens.next();
                         idx += 1;
@@ -1542,7 +1555,7 @@ mod parser_tests {
     fn test_toplevel_int_expression_statement() {
         check("1;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1557,7 +1570,7 @@ mod parser_tests {
     fn test_equal_equal() {
         check("1==2;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1574,7 +1587,7 @@ mod parser_tests {
     fn test_bang_equal() {
         check("1!=2;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1593,7 +1606,7 @@ mod parser_tests {
     fn mul_add() {
         check("1*2+3;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1616,7 +1629,7 @@ mod parser_tests {
     fn add_mul() {
         check("1+2*3;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1639,7 +1652,7 @@ mod parser_tests {
     fn test_toplevel_add_expression_statement() {
         check("1+2;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1658,7 +1671,7 @@ mod parser_tests {
     fn test_or() {
         check("print (1 or 2);", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1683,7 +1696,7 @@ mod parser_tests {
     fn test_or_or() {
         check("print (1 or 2 or 3);", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1719,7 +1732,7 @@ mod parser_tests {
 // a comment
 2;", expect![[r#"
     Entry: fn0
-    fn0: fun <toplevel> (entry bb0) {
+    fn0: fun <toplevel>() (entry bb0) {
       bb0 {
         v0 = NewFrame
         v1 = Const(Int(1))
@@ -1738,7 +1751,7 @@ mod parser_tests {
     fn test_print() {
         check("print 1+2;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1773,7 +1786,7 @@ var a = 1;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1792,7 +1805,7 @@ print a;",
         check("var aaaabbbbccccdddd = 1;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1821,7 +1834,7 @@ a = 2;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1850,7 +1863,7 @@ print b;
 print c;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1885,7 +1898,7 @@ var a = 2;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1906,7 +1919,7 @@ print a;",
         check("{}",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -1929,7 +1942,7 @@ print a;
 ",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -1965,7 +1978,7 @@ print a;
         check("while (true) {}",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Branch(bb1)
@@ -1991,7 +2004,7 @@ print a;
         check("while (true) { print 1; }",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Branch(bb1)
@@ -2021,7 +2034,7 @@ print a;
             while (a < 10) { print a; }",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -2057,7 +2070,7 @@ print a;
             while (a < 10) { print a; a = a + 1; }",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -2097,7 +2110,7 @@ print a;
     fn test_empty_fun() {
         check("fun empty() {}", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2106,7 +2119,7 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun empty (entry bb0) {
+            fn1: fun empty() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2127,7 +2140,7 @@ print a;
 ",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -2147,7 +2160,7 @@ print a;
     fn test_fun_return_nil() {
         check("fun empty() { return nil; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2156,7 +2169,7 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun empty (entry bb0) {
+            fn1: fun empty() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2170,7 +2183,7 @@ print a;
     fn test_fun_return_param() {
         check("fun f(a) { return a; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2179,10 +2192,9 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Return v3
@@ -2195,7 +2207,7 @@ print a;
     fn test_fun_inc() {
         check("fun inc(a) { return a+1; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2204,10 +2216,9 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun inc (entry bb0) {
+            fn1: fun inc(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Const(Int(1))
@@ -2224,7 +2235,7 @@ print a;
     fn test_fun_params() {
         check("fun f(a, b) { return a+b; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2233,12 +2244,10 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f(v1, v3) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
-                v3 = Param(1)
                 v4 = Store(@1) v0, v3
                 v5 = Load(@0) v0
                 v6 = Load(@1) v0
@@ -2258,7 +2267,7 @@ print a;
             f;
         ", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2268,7 +2277,7 @@ print a;
                 v5 = Return v4
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2293,7 +2302,7 @@ print a;
             f();
         ", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2304,7 +2313,7 @@ print a;
                 v6 = Return v5
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2321,7 +2330,7 @@ print a;
             f(1);
         ", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2333,7 +2342,7 @@ print a;
                 v7 = Return v6
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2350,7 +2359,7 @@ print a;
             f(1, 2, 3);
         ", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2364,7 +2373,7 @@ print a;
                 v9 = Return v8
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2381,7 +2390,7 @@ print a;
             1+f()+2;
         ", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2400,7 +2409,7 @@ print a;
                 v14 = Return v13
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2417,7 +2426,7 @@ print a;
             1*f()*2;
         ", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2436,7 +2445,7 @@ print a;
                 v14 = Return v13
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2453,7 +2462,7 @@ print a;
             f(1)(2);
         ", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2467,7 +2476,7 @@ print a;
                 v9 = Return v8
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Nil)
@@ -2486,7 +2495,7 @@ print a;
     fn test_load_attr() {
         check("fun f(a) { return a.b; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2495,10 +2504,9 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = GuardInstance v3
@@ -2513,7 +2521,7 @@ print a;
     fn test_load_attr_nested() {
         check("fun f(a) { return a.b.c; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2522,10 +2530,9 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = GuardInstance v3
@@ -2542,7 +2549,7 @@ print a;
     fn test_class() {
         check("class C { }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(ObjectClass)
@@ -2559,7 +2566,7 @@ print a;
     fn test_store_attr() {
         check("fun f(a) { a.b = 1; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2568,10 +2575,9 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Const(Int(1))
@@ -2588,7 +2594,7 @@ print a;
     fn test_store_attr_nested() {
         check("fun f(a) { a.b.c = 1; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2597,10 +2603,9 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = GuardInstance v3
@@ -2620,7 +2625,7 @@ print a;
         check("fun f() { }
             f.a;", expect![[r#"
                 Entry: fn0
-                fn0: fun <toplevel> (entry bb0) {
+                fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
                     v0 = NewFrame
                     v1 = NewClosure(fn1)
@@ -2632,7 +2637,7 @@ print a;
                     v7 = Return v6
                   }
                 }
-                fn1: fun f (entry bb0) {
+                fn1: fun f() (entry bb0) {
                   bb0 {
                     v0 = NewFrame
                     v1 = Const(Nil)
@@ -2647,7 +2652,7 @@ print a;
         check("fun f() { }
             f.a = 1;", expect![[r#"
                 Entry: fn0
-                fn0: fun <toplevel> (entry bb0) {
+                fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
                     v0 = NewFrame
                     v1 = NewClosure(fn1)
@@ -2660,7 +2665,7 @@ print a;
                     v8 = Return v7
                   }
                 }
-                fn1: fun f (entry bb0) {
+                fn1: fun f() (entry bb0) {
                   bb0 {
                     v0 = NewFrame
                     v1 = Const(Nil)
@@ -2674,7 +2679,7 @@ print a;
     fn test_call_method() {
         check("fun f(a) { a.b(); }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2683,10 +2688,9 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = GuardInstance v3
@@ -2704,7 +2708,7 @@ print a;
         check("class C { }
         print C;", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(ObjectClass)
@@ -2725,7 +2729,7 @@ print a;
             empty() { }
         }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(ObjectClass)
@@ -2735,7 +2739,7 @@ print a;
                 v5 = Return v4
               }
             }
-            fn1: fun empty (entry bb0) {
+            fn1: fun empty() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = This
@@ -2748,13 +2752,12 @@ print a;
     }
 
     #[test]
-    fn test_class_with_empty_methods() {
+    fn test_method_with_param() {
         check("class C {
-            empty0() { }
-            empty1() { }
+            empty(a) { }
         }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(ObjectClass)
@@ -2764,7 +2767,67 @@ print a;
                 v5 = Return v4
               }
             }
-            fn1: fun empty0 (entry bb0) {
+            fn1: fun empty(v3) (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = This
+                v2 = Store(@0) v0, v1
+                v4 = Store(@1) v0, v3
+                v5 = Const(Nil)
+                v6 = Return v5
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_method_with_params() {
+        check("class C {
+            empty(a, b) { }
+        }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel>() (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Const(Nil)
+                v5 = Return v4
+              }
+            }
+            fn1: fun empty(v3, v5) (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = This
+                v2 = Store(@0) v0, v1
+                v4 = Store(@1) v0, v3
+                v6 = Store(@2) v0, v5
+                v7 = Const(Nil)
+                v8 = Return v7
+              }
+            }
+        "#]])
+    }
+
+    #[test]
+    fn test_class_with_empty_methods() {
+        check("class C {
+            empty0() { }
+            empty1() { }
+        }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel>() (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Const(Nil)
+                v5 = Return v4
+              }
+            }
+            fn1: fun empty0() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = This
@@ -2773,7 +2836,7 @@ print a;
                 v4 = Return v3
               }
             }
-            fn2: fun empty1 (entry bb0) {
+            fn2: fun empty1() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = This
@@ -2790,7 +2853,7 @@ print a;
         check("class C {}
         class D < C {}", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(ObjectClass)
@@ -2819,7 +2882,7 @@ print a;
         check("class C {}
             C();", expect![[r#"
                 Entry: fn0
-                fn0: fun <toplevel> (entry bb0) {
+                fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
                     v0 = NewFrame
                     v1 = Const(ObjectClass)
@@ -2839,7 +2902,7 @@ print a;
         check("class C {}
             C(1, 2);", expect![[r#"
                 Entry: fn0
-                fn0: fun <toplevel> (entry bb0) {
+                fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
                     v0 = NewFrame
                     v1 = Const(ObjectClass)
@@ -2860,7 +2923,7 @@ print a;
     fn test_create_class_in_function() {
         check("fun f() { class C { } return C; }", expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = NewClosure(fn1)
@@ -2869,7 +2932,7 @@ print a;
                 v4 = Return v3
               }
             }
-            fn1: fun f (entry bb0) {
+            fn1: fun f() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(ObjectClass)
@@ -2924,7 +2987,7 @@ mod opt_tests {
         check("1; 2; 3;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v4 = Const(Nil)
                 v5 = Return v4
@@ -2940,7 +3003,7 @@ var a = 1;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -2962,7 +3025,7 @@ a = 3;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -2987,7 +3050,7 @@ a = a;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -3010,7 +3073,7 @@ a = b;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -3038,7 +3101,7 @@ print b;
 print c;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -3067,7 +3130,7 @@ var a = 2;
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -3094,7 +3157,7 @@ if (2) {
 print a;",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
@@ -3130,7 +3193,7 @@ print a;",
             while (a < 10) { print a; a = a + 1; }",
         expect![[r#"
             Entry: fn0
-            fn0: fun <toplevel> (entry bb0) {
+            fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0 = NewFrame
                 v1 = Const(Int(1))
