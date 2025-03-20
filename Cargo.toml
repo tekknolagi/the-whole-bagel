@@ -13,9 +13,3 @@ features = ["union"]
 
 [dev-dependencies]
 expect-test = "1.5"
-
-[source.crates-io]
-replace-with = "vendored-sources"
-
-[source.vendored-sources]
-directory = "third-party/vendor"
