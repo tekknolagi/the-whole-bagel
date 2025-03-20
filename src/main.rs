@@ -2616,6 +2616,61 @@ print a;
     }
 
     #[test]
+    fn test_load_attr_on_function() {
+        check("fun f() { }
+            f.a;", expect![[r#"
+                Entry: fn0
+                fn0: fun <toplevel> (entry bb0) {
+                  bb0 {
+                    v0 = NewFrame
+                    v1 = NewClosure(fn1)
+                    v2 = Store(@0) v0, v1
+                    v3 = Load(@0) v0
+                    v4 = GuardInstance v3
+                    v5 = LoadAttr(a) v4
+                    v6 = Const(Nil)
+                    v7 = Return v6
+                  }
+                }
+                fn1: fun f (entry bb0) {
+                  bb0 {
+                    v0 = NewFrame
+                    v1 = Const(Nil)
+                    v2 = Return v1
+                  }
+                }
+            "#]]);
+    }
+
+    #[test]
+    fn test_store_attr_on_function() {
+        check("fun f() { }
+            f.a = 1;", expect![[r#"
+                Entry: fn0
+                fn0: fun <toplevel> (entry bb0) {
+                  bb0 {
+                    v0 = NewFrame
+                    v1 = NewClosure(fn1)
+                    v2 = Store(@0) v0, v1
+                    v3 = Load(@0) v0
+                    v4 = Const(Int(1))
+                    v5 = GuardInstance v3
+                    v6 = StoreAttr(a) v5, v4
+                    v7 = Const(Nil)
+                    v8 = Return v7
+                  }
+                }
+                fn1: fun f (entry bb0) {
+                  bb0 {
+                    v0 = NewFrame
+                    v1 = Const(Nil)
+                    v2 = Return v1
+                  }
+                }
+            "#]]);
+    }
+
+    #[test]
     fn test_call_method() {
         check("fun f(a) { a.b(); }", expect![[r#"
             Entry: fn0
