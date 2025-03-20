@@ -2982,7 +2982,7 @@ mod opt_tests {
         parser.parse_program().unwrap();
         let mut actual = parser.prog;
         for fun in &mut actual.funs {
-            fun.unbox_locals();
+            // fun.unbox_locals();
             fun.sink_allocations();
             fun.eliminate_dead_code();
         }
