@@ -335,7 +335,7 @@ mod hir {
     define_id_type!("v", InsnId);
     define_id_type!("bb", BlockId);
     define_id_type!("fn", FunId);
-    define_id_type!("@", Offset);
+    define_id_type!("@", Slot);
 
     type InsnSet = TypedBitSet<InsnId>;
     type BlockSet = TypedBitSet<BlockId>;
@@ -457,11 +457,11 @@ mod hir {
                     for insn_id in &self.blocks[block_id.0].insns {
                         let Insn { opcode, operands } = &self.insns[insn_id.0];
                         match opcode {
-                            Opcode::Store(offset) => {
-                                env[offset.0] = InsnSet::one(operands[1]);
+                            Opcode::Store(slot) => {
+                                env[slot.0] = InsnSet::one(operands[1]);
                             }
-                            Opcode::Load(offset) => {
-                                env[offset.0] = InsnSet::one(*insn_id);
+                            Opcode::Load(slot) => {
+                                env[slot.0] = InsnSet::one(*insn_id);
                             }
                             _ => {}
                         }
@@ -485,12 +485,12 @@ mod hir {
                 for insn_id in insns {
                     let Insn { opcode, operands } = &self.insns[insn_id.0];
                     match opcode {
-                        Opcode::Store(offset) => {
-                            env[offset.0] = InsnSet::one(operands[1]);
+                        Opcode::Store(slot) => {
+                            env[slot.0] = InsnSet::one(operands[1]);
                             new_insns.push(insn_id);
                         }
-                        Opcode::Load(offset) => {
-                            let operands = &env[offset.0];
+                        Opcode::Load(slot) => {
+                            let operands = &env[slot.0];
                             match operands.len() {
                                 0 => panic!("Should have at least one value"),
                                 1 => {
@@ -750,8 +750,8 @@ mod hir {
         NewFrame,
         NewClass(ClassDef),
         NewClosure(FunId),
-        Load(Offset),
-        Store(Offset),
+        Load(Slot),
+        Store(Slot),
         LoadAttr(NameId),
         StoreAttr(NameId),
         GuardInt,
@@ -822,7 +822,7 @@ mod hir {
     #[derive(Clone)]
     struct Env<'a> {
         fun: FunId,
-        bindings: HashMap<NameId, Offset>,
+        bindings: HashMap<NameId, Slot>,
         parent: Option<&'a Env<'a>>,
     }
 
@@ -835,14 +835,14 @@ mod hir {
             Env { fun, bindings: HashMap::new(), parent: Some(parent) }
         }
 
-        fn lookup(&self, name: NameId) -> Option<Offset> {
+        fn lookup(&self, name: NameId) -> Option<Slot> {
             self.bindings.get(&name).copied()
         }
 
-        fn define(&mut self, name: NameId) -> Offset {
-            let offset = Offset(self.bindings.len());
-            self.bindings.insert(name.clone(), offset);
-            offset
+        fn define(&mut self, name: NameId) -> Slot {
+            let slot = Slot(self.bindings.len());
+            self.bindings.insert(name.clone(), slot);
+            slot
         }
     }
 
@@ -1121,18 +1121,18 @@ mod hir {
             self.expect(Token::Semicolon)
         }
 
-        fn write_local(&mut self, offset: Offset, value: InsnId) {
+        fn write_local(&mut self, slot: Slot, value: InsnId) {
             let fun_id = self.fun();
             let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
-            *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-            self.push_insn(Opcode::Store(offset), smallvec![self.frame(), value]);
+            *num_locals = std::cmp::max(*num_locals, slot.0) + 1;
+            self.push_insn(Opcode::Store(slot), smallvec![self.frame(), value]);
         }
 
-        fn read_local(&mut self, offset: Offset) -> InsnId {
+        fn read_local(&mut self, slot: Slot) -> InsnId {
             let fun_id = self.fun();
             let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
-            *num_locals = std::cmp::max(*num_locals, offset.0) + 1;
-            self.push_insn(Opcode::Load(offset), smallvec![self.frame()])
+            *num_locals = std::cmp::max(*num_locals, slot.0) + 1;
+            self.push_insn(Opcode::Load(slot), smallvec![self.frame()])
         }
 
         fn parse_function(&mut self, env: &mut Env) -> Result<(), ParseError> {
@@ -1198,14 +1198,14 @@ mod hir {
 
         fn load_local(&mut self, env: &Env, name: NameId) -> Result<InsnId, ParseError> {
             match env.lookup(name) {
-                Some(offset) => Ok(self.read_local(offset)),
+                Some(slot) => Ok(self.read_local(slot)),
                 None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
             }
         }
 
         fn define_local(&mut self, env: &mut Env, name: NameId, value: InsnId) {
-            let offset = env.define(name);
-            self.write_local(offset, value);
+            let slot = env.define(name);
+            self.write_local(slot, value);
         }
 
         fn store_local(&mut self, env: &Env, name: NameId, value: InsnId) -> Result<InsnId, ParseError> {
@@ -1213,7 +1213,7 @@ mod hir {
                 return Err(ParseError::CannotAssignToThis);
             }
             match env.lookup(name) {
-                Some(offset) => { self.write_local(offset, value); Ok(value) }
+                Some(slot) => { self.write_local(slot, value); Ok(value) }
                 None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
             }
         }
