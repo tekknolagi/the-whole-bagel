@@ -1009,7 +1009,9 @@ mod hir {
             // closure) when using it so we don't bake in the value at compile-time.
             let mut func_env = Env::from_parent(fun, &env);
             let this_name = self.prog.intern("this");
-            let this = self.push_op(Opcode::This);
+            // TODO(max): Decide if this should be its own opcode or just another param
+            let this = self.prog.funs[fun.0].new_insn(Insn { opcode: Opcode::This, operands: smallvec![] });
+            self.prog.funs[fun.0].params.push(this);
             self.define_local(&mut func_env, this_name, this);
             loop {
                 match self.tokens.peek() {
@@ -2739,10 +2741,9 @@ print a;
                 v5 = Return v4
               }
             }
-            fn1: fun empty() (entry bb0) {
+            fn1: fun empty(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = This
                 v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
@@ -2767,10 +2768,9 @@ print a;
                 v5 = Return v4
               }
             }
-            fn1: fun empty(v3) (entry bb0) {
+            fn1: fun empty(v1, v3) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = This
                 v2 = Store(@0) v0, v1
                 v4 = Store(@1) v0, v3
                 v5 = Const(Nil)
@@ -2796,10 +2796,9 @@ print a;
                 v5 = Return v4
               }
             }
-            fn1: fun empty(v3, v5) (entry bb0) {
+            fn1: fun empty(v1, v3, v5) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = This
                 v2 = Store(@0) v0, v1
                 v4 = Store(@1) v0, v3
                 v6 = Store(@2) v0, v5
@@ -2827,19 +2826,17 @@ print a;
                 v5 = Return v4
               }
             }
-            fn1: fun empty0() (entry bb0) {
+            fn1: fun empty0(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = This
                 v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
               }
             }
-            fn2: fun empty1() (entry bb0) {
+            fn2: fun empty1(v1) (entry bb0) {
               bb0 {
                 v0 = NewFrame
-                v1 = This
                 v2 = Store(@0) v0, v1
                 v3 = Const(Nil)
                 v4 = Return v3
