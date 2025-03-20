@@ -440,6 +440,9 @@ mod hir {
         }
 
         pub fn unbox_locals(&mut self) {
+            // TODO(max): Whole-heap modeling with escapes
+            // TODO(max): Take into account aliasing
+            // TODO(max): Allocation sinking and removal
             fn join(left: &Vec<InsnSet>, right: &Vec<InsnSet>) -> Vec<InsnSet> {
                 assert_eq!(left.len(), right.len());
                 left.into_iter().zip(right).map(|(l, r)| l.union(r)).collect()
