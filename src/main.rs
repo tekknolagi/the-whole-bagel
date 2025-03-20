@@ -526,11 +526,9 @@ mod hir {
                         match (opcode, operands.as_slice()) {
                             (Opcode::NewFrame, []) => heap.alloc(*insn_id),
                             (Opcode::Const(_), []) => {},
+                            // TODO(emacs): Figure out what to do if the object is not virtual
                             (Opcode::Store(slot), [base, value]) => heap.store(*base, *slot, *value),
                             // (Opcode::Load(slot), [base]) => heap.load(*base, *slot, *value),
-                            (_, _) => {
-                                // TODO(max): escape operands
-                            }
                         }
                     }
                     for succ in self.succs(*block_id) {
@@ -566,8 +564,10 @@ mod hir {
                                 }
                             }
                         }
-                        (_, _) => {
-                            // TODO(max): escape operands
+                        _ => {
+                            for operand in operands {
+                                self.materialize(heap, new_insns, operand);
+                            }
                             new_insns.push(*insn_id);
                         }
                     }
