@@ -540,6 +540,7 @@ mod hir {
                 Opcode::StoreAttr(_) => true,
                 Opcode::GuardInt => true,
                 Opcode::GuardClass => true,
+                Opcode::GuardInstance => true,
                 Opcode::IsTruthy => false,
                 Opcode::NewClass(_) => false,
                 Opcode::This => false,
@@ -756,6 +757,7 @@ mod hir {
         StoreAttr(NameId),
         GuardInt,
         GuardClass,
+        GuardInstance,
         IsTruthy,
         This,
         Call,
@@ -1221,7 +1223,10 @@ mod hir {
             match lvalue {
                 LValue::Insn(insn_id) => Ok(insn_id),
                 LValue::Name(name) => self.load_local(env, name),
-                LValue::Attr(obj, name) => Ok(self.push_insn(Opcode::LoadAttr(name), smallvec![obj]))
+                LValue::Attr(obj, name) => {
+                    let obj = self.push_insn(Opcode::GuardInstance, smallvec![obj]);
+                    Ok(self.push_insn(Opcode::LoadAttr(name), smallvec![obj]))
+                }
             }
         }
 
@@ -1286,6 +1291,7 @@ mod hir {
                         }
                         LValue::Attr(obj, name) => {
                             let rhs = self.parse_(&mut env, next_prec)?;
+                            let obj = self.push_insn(Opcode::GuardInstance, smallvec![obj]);
                             self.push_insn(Opcode::StoreAttr(name), smallvec![obj, rhs]);
                             LValue::Insn(rhs)
                         }
@@ -2495,8 +2501,9 @@ print a;
                 v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
-                v4 = LoadAttr(b) v3
-                v5 = Return v4
+                v4 = GuardInstance v3
+                v5 = LoadAttr(b) v4
+                v6 = Return v5
               }
             }
         "#]]);
@@ -2521,9 +2528,11 @@ print a;
                 v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
-                v4 = LoadAttr(b) v3
-                v5 = LoadAttr(c) v4
-                v6 = Return v5
+                v4 = GuardInstance v3
+                v5 = LoadAttr(b) v4
+                v6 = GuardInstance v5
+                v7 = LoadAttr(c) v6
+                v8 = Return v7
               }
             }
         "#]]);
@@ -2566,9 +2575,10 @@ print a;
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Const(Int(1))
-                v5 = StoreAttr(b) v3, v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v5 = GuardInstance v3
+                v6 = StoreAttr(b) v5, v4
+                v7 = Const(Nil)
+                v8 = Return v7
               }
             }
         "#]]);
@@ -2593,11 +2603,13 @@ print a;
                 v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
-                v4 = LoadAttr(b) v3
-                v5 = Const(Int(1))
-                v6 = StoreAttr(c) v4, v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v4 = GuardInstance v3
+                v5 = LoadAttr(b) v4
+                v6 = Const(Int(1))
+                v7 = GuardInstance v5
+                v8 = StoreAttr(c) v7, v6
+                v9 = Const(Nil)
+                v10 = Return v9
               }
             }
         "#]]);
@@ -2622,10 +2634,11 @@ print a;
                 v1 = Param(0)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
-                v4 = LoadAttr(b) v3
-                v5 = Call v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v4 = GuardInstance v3
+                v5 = LoadAttr(b) v4
+                v6 = Call v5
+                v7 = Const(Nil)
+                v8 = Return v7
               }
             }
         "#]])
