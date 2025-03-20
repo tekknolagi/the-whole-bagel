@@ -113,6 +113,12 @@ impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T> {
         Self { set: self.set.union(&other.set).collect(), phantom: Default::default() }
     }
 
+    pub fn union_with(&mut self, other: &Self) -> bool {
+        if self.set.is_superset(&other.set) { return false; }
+        self.set.union_with(&other.set);
+        true
+    }
+
     pub fn contains(&self, item: T) -> bool {
         self.set.contains(item.into())
     }
@@ -352,6 +358,75 @@ mod hir {
         }
     }
 
+    #[derive(Clone)]
+    struct VirtualObject {
+        insn: InsnId,
+        slots: SmallVec::<[InsnSet; 8]>,
+    }
+
+    impl VirtualObject {
+        fn new(insn: InsnId) -> Self {
+            Self { insn, slots: SmallVec::<[InsnSet; 8]>::new() }
+        }
+
+        fn store(&mut self, slot: Slot, value: InsnId) {
+            if slot.0 >= self.slots.len() {
+                self.slots.resize(slot.0 + 1, InsnSet::new());
+            }
+            self.slots[slot.0] = InsnSet::one(value);
+        }
+
+        fn load(&self, slot: Slot) -> &InsnSet {
+            &self.slots[slot.0]
+        }
+
+        fn join_in_place(&mut self, other: &VirtualObject) -> bool {
+            let mut changed = false;
+            if other.slots.len() > self.slots.len() {
+                self.slots.resize(other.slots.len(), InsnSet::new());
+                changed = true;
+            }
+            for idx in 0..other.slots.len() {
+                changed |= self.slots[idx].union_with(&other.slots[idx]);
+            }
+            changed
+        }
+    }
+
+    #[derive(Clone)]
+    struct VirtualHeap {
+        objects: HashMap<InsnId, VirtualObject>,
+    }
+
+    impl VirtualHeap {
+        fn new() -> Self {
+            Self { objects: Default::default() }
+        }
+
+        fn alloc(&mut self, insn: InsnId) {
+            self.objects.insert(insn, VirtualObject::new(insn));
+        }
+
+        fn store(&mut self, base: InsnId, slot: Slot, value: InsnId) {
+            let mut obj = self.objects.get_mut(&base).unwrap();
+            obj.store(slot, value);
+        }
+
+        fn load(&self, base: InsnId, slot: Slot) -> &InsnSet {
+            &self.objects[&base].load(slot)
+        }
+
+        fn join_in_place(&mut self, other: &VirtualHeap) -> bool {
+            let mut changed = false;
+            for (insn, other_obj) in &other.objects {
+                self.objects.entry(*insn)
+                    .and_modify(|obj| { changed |= obj.join_in_place(&other_obj); })
+                    .or_insert_with(|| { changed = true; other_obj.clone() });
+            }
+            changed
+        }
+    }
+
     #[derive(Debug)]
     pub struct Function {
         name: NameId,
@@ -437,6 +512,68 @@ mod hir {
                 self.po_from(succ, result, visited);
             }
             result.push(block);
+        }
+
+        pub fn sink_allocations(&mut self) {
+            let rpo = self.rpo();
+            let mut block_entry = vec![VirtualHeap::new(); self.blocks.len()];
+            loop {
+                let mut changed = false;
+                for block_id in &rpo {
+                    let mut heap = block_entry[block_id.0].clone();
+                    for insn_id in &self.blocks[block_id.0].insns {
+                        let Insn { opcode, operands } = &self.insns[insn_id.0];
+                        match (opcode, operands.as_slice()) {
+                            (Opcode::NewFrame, []) => heap.alloc(*insn_id),
+                            (Opcode::Const(_), []) => {},
+                            (Opcode::Store(slot), [base, value]) => heap.store(*base, *slot, *value),
+                            // (Opcode::Load(slot), [base]) => heap.load(*base, *slot, *value),
+                            (_, _) => {
+                                // TODO(max): escape operands
+                            }
+                        }
+                    }
+                    for succ in self.succs(*block_id) {
+                        changed |= block_entry[succ.0].join_in_place(&heap);
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            for block_id in &rpo {
+                let mut heap = block_entry[block_id.0].clone();
+                let insns = std::mem::take(&mut self.blocks[block_id.0].insns);
+                let mut new_insns = vec![];
+                for insn_id in &insns {
+                    let Insn { opcode, operands } = &self.insns[insn_id.0];
+                    match (opcode, operands.as_slice()) {
+                        (Opcode::NewFrame, []) => heap.alloc(*insn_id),
+                        (Opcode::Store(slot), [base, value]) => heap.store(*base, *slot, *value),
+                        (Opcode::Load(slot), [base]) => {
+                            let operands = heap.load(*base, *slot);
+                            match operands.len() {
+                                0 => panic!("Should have at least one value"),
+                                1 => {
+                                    let replacement = operands.get_single();
+                                    self.make_equal_to(*insn_id, replacement);
+                                    new_insns.push(replacement);
+                                }
+                                _ => {
+                                    let phi = self.push_insn(*block_id, Opcode::Phi, operands.as_vec().into());
+                                    self.make_equal_to(*insn_id, phi);
+                                    new_insns.push(phi);
+                                }
+                            }
+                        }
+                        (_, _) => {
+                            // TODO(max): escape operands
+                            new_insns.push(*insn_id);
+                        }
+                    }
+                }
+                self.blocks[block_id.0].insns = new_insns;
+            }
         }
 
         pub fn unbox_locals(&mut self) {
@@ -2846,6 +2983,7 @@ mod opt_tests {
         let mut actual = parser.prog;
         for fun in &mut actual.funs {
             fun.unbox_locals();
+            fun.sink_allocations();
             fun.eliminate_dead_code();
         }
         expect.assert_eq(format!("{actual}").as_str());
