@@ -357,33 +357,29 @@ mod hir {
         name: NameId,
         entry: BlockId,
         insns: Vec<Insn>,
-        union_find: Vec<Option<InsnId>>,
         blocks: Vec<Block>,
         num_locals: usize,
     }
 
     impl Function {
         fn new(name: NameId) -> Function {
-            Function { name, entry: BlockId(0), insns: vec![], union_find: vec![], blocks: vec![Block::new()], num_locals: 0 }
+            Function { name, entry: BlockId(0), insns: vec![], blocks: vec![Block::new()], num_locals: 0 }
         }
 
         fn find(&self, insn: InsnId) -> InsnId {
             let mut result = insn;
             loop {
-                let it = if result.0 < self.union_find.len() { self.union_find[result.0] } else { None };
-                match it {
-                    Some(insn) => result = insn,
-                    None => return result,
+                let insn = &self.insns[result.0];
+                match (&insn.opcode, insn.operands.as_slice()) {
+                    (Opcode::Identity, [it]) => result = *it,
+                    _ => return result,
                 }
             }
         }
 
         fn make_equal_to(&mut self, left: InsnId, right: InsnId) {
             let found = self.find(left);
-            if found.0 >= self.union_find.len() {
-                self.union_find.resize(found.0+1, None);
-            }
-            self.union_find[found.0] = Some(right);
+            self.insns[found.0] = Insn { opcode: Opcode::Identity, operands: smallvec![right] };
         }
 
         fn new_block(&mut self) -> BlockId {
@@ -513,8 +509,9 @@ mod hir {
             }
         }
 
-        fn is_critical(&self, insn: InsnId) -> bool {
-            match &self.insns[insn.0].opcode {
+        fn is_critical(&self, insn_id: InsnId) -> bool {
+            let insn_id = self.find(insn_id);
+            match &self.insns[insn_id.0].opcode {
                 Opcode::Const(_) => false,
                 Opcode::Abort => true,
                 Opcode::Print => true,
@@ -545,6 +542,7 @@ mod hir {
                 Opcode::This => false,
                 Opcode::NewClosure(_) => false,
                 Opcode::Call(_) => true,
+                Opcode::Identity => panic!("Should not see Identity after calling find()"),
             }
         }
 
@@ -727,6 +725,7 @@ mod hir {
 
     #[derive(Debug, PartialEq)]
     enum Opcode {
+        Identity,
         Const(Value),
         Abort,
         Print,
