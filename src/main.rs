@@ -139,7 +139,7 @@ mod hir {
     use crate::{TypedBitSet, NameId, Interner};
     use smallstr::SmallString;
     use smallvec::{smallvec, SmallVec};
-    use std::collections::{HashMap, BTreeMap};
+    use std::collections::HashMap;
     use std::collections::VecDeque;
 
     pub struct Lexer<'a> {
@@ -398,6 +398,18 @@ mod hir {
             result
         }
 
+        fn push_insn(&mut self, block: BlockId, opcode: Opcode, operands: Operands) -> InsnId {
+            let is_phi = opcode == Opcode::Phi;
+            let result = self.new_insn(Insn { opcode, operands });
+            if is_phi {
+                self.blocks[block.0].phis.push(result);
+            } else {
+                // TODO(max): Catch double terminators
+                self.blocks[block.0].insns.push(result);
+            }
+            result
+        }
+
         fn is_terminated(&self, block: BlockId) -> bool {
             match self.blocks[block.0].insns.last().map(|insn| &self.insns[insn.0].opcode) {
                 Some(Opcode::Return | Opcode::CondBranch(..) | Opcode::Branch(..)) => true,
@@ -442,25 +454,24 @@ mod hir {
             }
             let empty_state = vec![InsnSet::new(); self.num_locals];
             let mut block_entry = vec![empty_state.clone(); self.blocks.len()];
-            let mut replacements: BTreeMap<InsnId, InsnSet> = BTreeMap::new();
-            let mut last_pass = false;
+            let rpo = self.rpo();
             loop {
                 let mut changed = false;
-                for block_id in self.rpo() {
+                for block_id in &rpo {
                     let mut env: Vec<_> = block_entry[block_id.0].clone();
                     for insn_id in &self.blocks[block_id.0].insns {
                         let Insn { opcode, operands } = &self.insns[insn_id.0];
                         match opcode {
                             Opcode::Store(offset) => {
-                                env[offset.0] = InsnSet::one(self.find(operands[1]));
+                                env[offset.0] = InsnSet::one(operands[1]);
                             }
-                            Opcode::Load(offset) if last_pass => {
-                                replacements.insert(*insn_id, env[offset.0].clone());
+                            Opcode::Load(offset) => {
+                                env[offset.0] = InsnSet::one(*insn_id);
                             }
                             _ => {}
                         }
                     }
-                    for succ in self.succs(block_id) {
+                    for succ in self.succs(*block_id) {
                         let new = join(&block_entry[succ.0], &env);
                         if block_entry[succ.0] != new {
                             block_entry[succ.0] = new;
@@ -468,23 +479,41 @@ mod hir {
                         }
                     }
                 }
-                if last_pass {
+                if !changed {
                     break;
                 }
-                if !changed {
-                    last_pass = true;
-                }
             }
-            // TODO(max): Hash-cons phi
-            for (insn_id, operands) in replacements {
-                match operands.len() {
-                    0 => panic!("Should have at least one value"),
-                    1 => self.make_equal_to(insn_id, operands.get_single()),
-                    _ => {
-                        let phi = self.new_insn(Insn { opcode: Opcode::Phi, operands: operands.as_vec().into() });
-                        self.make_equal_to(insn_id, phi);
+            for block_id in &rpo {
+                let mut env: Vec<_> = std::mem::take(&mut block_entry[block_id.0]);
+                let insns = std::mem::take(&mut self.blocks[block_id.0].insns);
+                let mut new_insns = vec![];
+                for insn_id in insns {
+                    let Insn { opcode, operands } = &self.insns[insn_id.0];
+                    match opcode {
+                        Opcode::Store(offset) => {
+                            env[offset.0] = InsnSet::one(operands[1]);
+                            new_insns.push(insn_id);
+                        }
+                        Opcode::Load(offset) => {
+                            let operands = &env[offset.0];
+                            match operands.len() {
+                                0 => panic!("Should have at least one value"),
+                                1 => {
+                                    let replacement = operands.get_single();
+                                    self.make_equal_to(insn_id, replacement);
+                                    new_insns.push(replacement);
+                                }
+                                _ => {
+                                    let phi = self.push_insn(*block_id, Opcode::Phi, operands.as_vec().into());
+                                    self.make_equal_to(insn_id, phi);
+                                    new_insns.push(phi);
+                                }
+                            }
+                        }
+                        _ => new_insns.push(insn_id),
                     }
                 }
+                self.blocks[block_id.0].insns = new_insns;
             }
         }
 
@@ -776,15 +805,7 @@ mod hir {
         }
 
         fn push_insn(&mut self, fun: FunId, block: BlockId, opcode: Opcode, operands: Operands) -> InsnId {
-            let is_phi = opcode == Opcode::Phi;
-            let result = self.funs[fun.0].new_insn(Insn { opcode, operands });
-            if is_phi {
-                self.funs[fun.0].blocks[block.0].phis.push(result);
-            } else {
-                // TODO(max): Catch double terminators
-                self.funs[fun.0].blocks[block.0].insns.push(result);
-            }
-            result
+            self.funs[fun.0].push_insn(block, opcode, operands)
         }
     }
 
@@ -3038,11 +3059,9 @@ print a;",
                 v22 = Return v21
               }
               bb2 {
-                v24 = Phi v1, v17
-                v12 = Print v24
-                v25 = Phi v1, v17
+                v12 = Print v23
                 v14 = Const(Int(1))
-                v15 = GuardInt v25
+                v15 = GuardInt v23
                 v16 = GuardInt v14
                 v17 = Add v15, v16
                 v18 = Store(@0) v0, v17
