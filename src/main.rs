@@ -544,7 +544,7 @@ mod hir {
                 Opcode::NewClass(_) => false,
                 Opcode::This => false,
                 Opcode::NewClosure(_) => false,
-                Opcode::Call(_) => true,
+                Opcode::Call => true,
                 Opcode::Identity => panic!("Should not see Identity after calling find()"),
             }
         }
@@ -758,7 +758,7 @@ mod hir {
         GuardClass,
         IsTruthy,
         This,
-        Call(InsnId),
+        Call,
     }
 
     type Operands = SmallVec::<[InsnId; 2]>;
@@ -1173,23 +1173,22 @@ mod hir {
             Ok(())
         }
 
-        fn parse_args(&mut self, mut env: &mut Env) -> Result<Operands, ParseError> {
+        fn parse_args(&mut self, mut env: &mut Env, args: &mut Operands) -> Result<(), ParseError> {
             // TODO(max): Come up with a better idiom to parse comma-separated lists. This is wack.
             // TODO(max): Disallow f(x,)
-            let mut result = smallvec![];
             loop {
                 match self.tokens.peek() {
                     Some(Token::RParen) => break,
                     Some(Token::Comma) => return Err(ParseError::UnexpectedToken(Token::Comma)),
                     None => return Err(ParseError::UnexpectedEof),
-                    _ => result.push(self.parse_expression(&mut env)?),
+                    _ => args.push(self.parse_expression(&mut env)?),
                 }
                 match self.tokens.peek() {
                     Some(Token::Comma) => { self.tokens.next(); }
                     _ => break,
                 }
             }
-            Ok(result)
+            Ok(())
         }
 
         fn parse_expression(&mut self, env: &mut Env) -> Result<InsnId, ParseError> {
@@ -1320,9 +1319,10 @@ mod hir {
                 }
                 if token == Token::LParen {
                     // Function call
-                    let operands = self.parse_args(&mut env)?;
+                    let mut operands = smallvec![lhs_value];
+                    self.parse_args(&mut env, &mut operands)?;
                     self.expect(Token::RParen)?;
-                    lhs = LValue::Insn(self.push_insn(Opcode::Call(lhs_value), operands));
+                    lhs = LValue::Insn(self.push_insn(Opcode::Call, operands));
                     continue;
                 }
                 let opcode = match token {
@@ -2293,7 +2293,7 @@ print a;
                 v1 = NewClosure(fn1)
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
-                v4 = Call(v3)
+                v4 = Call v3
                 v5 = Const(Nil)
                 v6 = Return v5
               }
@@ -2322,7 +2322,7 @@ print a;
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Const(Int(1))
-                v5 = Call(v3) v4
+                v5 = Call v3, v4
                 v6 = Const(Nil)
                 v7 = Return v6
               }
@@ -2353,7 +2353,7 @@ print a;
                 v4 = Const(Int(1))
                 v5 = Const(Int(2))
                 v6 = Const(Int(3))
-                v7 = Call(v3) v4, v5, v6
+                v7 = Call v3, v4, v5, v6
                 v8 = Const(Nil)
                 v9 = Return v8
               }
@@ -2382,7 +2382,7 @@ print a;
                 v2 = Store(@0) v0, v1
                 v3 = Const(Int(1))
                 v4 = Load(@0) v0
-                v5 = Call(v4)
+                v5 = Call v4
                 v6 = Const(Int(2))
                 v7 = GuardInt v5
                 v8 = GuardInt v6
@@ -2418,7 +2418,7 @@ print a;
                 v2 = Store(@0) v0, v1
                 v3 = Const(Int(1))
                 v4 = Load(@0) v0
-                v5 = Call(v4)
+                v5 = Call v4
                 v6 = Const(Int(2))
                 v7 = GuardInt v5
                 v8 = GuardInt v6
@@ -2454,9 +2454,9 @@ print a;
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = Const(Int(1))
-                v5 = Call(v3) v4
+                v5 = Call v3, v4
                 v6 = Const(Int(2))
-                v7 = Call(v5) v6
+                v7 = Call v5, v6
                 v8 = Const(Nil)
                 v9 = Return v8
               }
@@ -2623,7 +2623,7 @@ print a;
                 v2 = Store(@0) v0, v1
                 v3 = Load(@0) v0
                 v4 = LoadAttr(b) v3
-                v5 = Call(v4)
+                v5 = Call v4
                 v6 = Const(Nil)
                 v7 = Return v6
               }
@@ -2758,7 +2758,7 @@ print a;
                     v2 = NewClass(C, v1)
                     v3 = Store(@0) v0, v2
                     v4 = Load(@0) v0
-                    v5 = Call(v4)
+                    v5 = Call v4
                     v6 = Const(Nil)
                     v7 = Return v6
                   }
@@ -2780,7 +2780,7 @@ print a;
                     v4 = Load(@0) v0
                     v5 = Const(Int(1))
                     v6 = Const(Int(2))
-                    v7 = Call(v4) v5, v6
+                    v7 = Call v4, v5, v6
                     v8 = Const(Nil)
                     v9 = Return v8
                   }
