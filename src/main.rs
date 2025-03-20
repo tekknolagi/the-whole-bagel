@@ -1025,7 +1025,6 @@ mod hir {
 
         fn parse_toplevel(&mut self, mut env: &mut Env) -> Result<(), ParseError> {
             match self.tokens.peek() {
-                Some(Token::Class) => self.parse_class(&mut env),
                 _ => self.parse_statement(&mut env),
             }
         }
@@ -1048,6 +1047,7 @@ mod hir {
                     self.tokens.next();
                     return self.parse_function(&mut env);  // no semicolon
                 }
+                Some(Token::Class) => return self.parse_class(&mut env),  // no semicolon
                 Some(Token::Var) => {
                     self.tokens.next();
                     let name = self.expect_ident()?;
@@ -2786,6 +2786,32 @@ print a;
                   }
                 }
             "#]])
+    }
+
+    #[test]
+    fn test_create_class_in_function() {
+        check("fun f() { class C { } return C; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel> (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = NewClosure(fn1)
+                v2 = Store(@0) v0, v1
+                v3 = Const(Nil)
+                v4 = Return v3
+              }
+            }
+            fn1: fun f (entry bb0) {
+              bb0 {
+                v0 = NewFrame
+                v1 = Const(ObjectClass)
+                v2 = NewClass(C, v1)
+                v3 = Store(@0) v0, v2
+                v4 = Load(@0) v0
+                v5 = Return v4
+              }
+            }
+        "#]])
     }
 
     // #[test]
