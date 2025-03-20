@@ -446,11 +446,7 @@ mod hir {
         pub fn unbox_locals(&mut self) {
             fn join(left: &Vec<InsnSet>, right: &Vec<InsnSet>) -> Vec<InsnSet> {
                 assert_eq!(left.len(), right.len());
-                let mut result = vec![InsnSet::new(); left.len()];
-                for idx in 0..left.len() {
-                    result[idx] = left[idx].union(&right[idx]);
-                }
-                result
+                left.into_iter().zip(right).map(|(l, r)| l.union(r)).collect()
             }
             let empty_state = vec![InsnSet::new(); self.num_locals];
             let mut block_entry = vec![empty_state.clone(); self.blocks.len()];
