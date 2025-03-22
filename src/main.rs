@@ -2131,6 +2131,8 @@ print a;
         "#]])
     }
 
+    // TODO(max): Test that a function can refer to itself
+
     #[test]
     fn test_scope() {
         check("
