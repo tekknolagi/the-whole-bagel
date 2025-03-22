@@ -1372,6 +1372,30 @@ mod hir {
     }
 }
 
+mod runtime {
+    #[repr(transparent)]
+    pub struct Object {
+        ptr: usize,
+    }
+
+    #[repr(C)]
+    pub struct HeapObject {
+        data: usize,
+    }
+
+    #[repr(C)]
+    pub struct IntObject {
+        obj: HeapObject,
+        value: i64,
+    }
+
+    extern "C" {
+        fn twb_as_heap_object(obj: Object) -> *const HeapObject;
+        fn twb_as_int_object(obj: Object) -> *const IntObject;
+        fn twb_print(obj: Object) -> std::ffi::c_void;
+    }
+}
+
 fn main() -> Result<(), hir::ParseError> {
     // let mut lexer = Lexer::from_str("print \"hello, world!\"; 1 + abc <= 3; 4 < 5; 6 == 7; true; false;
     //     var average = (min + max) / 2;");
@@ -3223,5 +3247,15 @@ print a;",
               }
             }
         "#]]);
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use crate::runtime;
+
+    #[test]
+    fn test_sizes() {
+        assert_eq!(std::mem::size_of::<runtime::HeapObject>(), 8);
     }
 }
