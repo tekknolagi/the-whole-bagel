@@ -302,7 +302,7 @@ mod hir {
         fn read_int(&mut self, mut result: i64) -> Result<Token, LexError> {
             loop {
                 match self.chars.peek().and_then(|c| c.to_digit(NUMBER_BASE)).and_then(|d| Some(d as i64)) {
-                    Some(d) => result = result * NUMBER_BASE + d,
+                    Some(d) => result = result * (NUMBER_BASE as i64) + d,
                     _ => break,
                 }
                 self.chars.next();
