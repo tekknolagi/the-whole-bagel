@@ -12,16 +12,38 @@ pub const TFunction: Type = Type::from_bits(0x80);
 pub const TNil: Type = Type::from_bits(0x100);
 pub const TFrame: Type = Type::from_bits(0x200);
 pub const TObject: Type = Type::from_bits(0x3ff);
-pub const TCBool: Type = Type::from_bits(0x400);
-pub const TPrimitive: Type = Type::from_bits(0x400);
-pub const TVoid: Type = Type::from_bits(0x800);
-pub const TAny: Type = Type::from_bits(0xfff);
-pub const NUM_TYPE_BITS: usize = 12;
-pub const ALL_TYPES: [(&'static str, Type); 18] = [
+pub const TCInt8: Type = Type::from_bits(0x400);
+pub const TCInt16: Type = Type::from_bits(0x800);
+pub const TCInt32: Type = Type::from_bits(0x1000);
+pub const TCInt64: Type = Type::from_bits(0x2000);
+pub const TCSigned: Type = Type::from_bits(0x3c00);
+pub const TCUInt8: Type = Type::from_bits(0x4000);
+pub const TCUInt16: Type = Type::from_bits(0x8000);
+pub const TCUInt32: Type = Type::from_bits(0x10000);
+pub const TCUInt64: Type = Type::from_bits(0x20000);
+pub const TCUnsigned: Type = Type::from_bits(0x3c000);
+pub const TCInt: Type = Type::from_bits(0x3fc00);
+pub const TCBool: Type = Type::from_bits(0x40000);
+pub const TPrimitive: Type = Type::from_bits(0x7fc00);
+pub const TVoid: Type = Type::from_bits(0x80000);
+pub const TAny: Type = Type::from_bits(0xfffff);
+pub const NUM_TYPE_BITS: usize = 20;
+pub const ALL_TYPES: [(&'static str, Type); 29] = [
     ("Any", TAny),
     ("Void", TVoid),
-    ("CBool", TCBool),
     ("Primitive", TPrimitive),
+    ("CBool", TCBool),
+    ("CInt", TCInt),
+    ("CUnsigned", TCUnsigned),
+    ("CUInt64", TCUInt64),
+    ("CUInt32", TCUInt32),
+    ("CUInt16", TCUInt16),
+    ("CUInt8", TCUInt8),
+    ("CSigned", TCSigned),
+    ("CInt64", TCInt64),
+    ("CInt32", TCInt32),
+    ("CInt16", TCInt16),
+    ("CInt8", TCInt8),
     ("Object", TObject),
     ("Frame", TFrame),
     ("Nil", TNil),

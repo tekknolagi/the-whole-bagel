@@ -48,7 +48,13 @@ Nil = Object.add_child("Nil")
 Frame = Object.add_child("Frame")
 
 Primitive = Any.add_child("Primitive")
+CInt = Primitive.add_child("CInt")
 CBool = Primitive.add_child("CBool")
+CSigned = CInt.add_child("CSigned")
+CUnsigned = CInt.add_child("CUnsigned")
+for size in [8, 16, 32, 64]:
+    CUnsigned.add_child(f"CUInt{size}")
+    CSigned.add_child(f"CInt{size}")
 
 Void = Any.add_child("Void")
 
