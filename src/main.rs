@@ -1,6 +1,8 @@
+#![allow(non_upper_case_globals)]
 #![allow(dead_code)]
 use std::collections::HashMap;
 use bit_set::BitSet;
+mod hir_type;
 
 macro_rules! define_id_type {
     ($prefix:expr, $name:ident) => {
@@ -141,6 +143,7 @@ mod hir {
     use smallvec::{smallvec, SmallVec};
     use std::collections::HashMap;
     use std::collections::VecDeque;
+    use crate::hir_type::*;
 
     pub struct Lexer<'a> {
         chars: std::iter::Peekable<std::str::Chars<'a>>,
@@ -358,13 +361,14 @@ mod hir {
         entry: BlockId,
         params: Vec<InsnId>,
         insns: Vec<Insn>,
+        insn_types: Vec<Type>,
         blocks: Vec<Block>,
         num_locals: usize,
     }
 
     impl Function {
         fn new(name: NameId) -> Function {
-            Function { name, entry: BlockId(0), insns: vec![], params: vec![], blocks: vec![Block::new()], num_locals: 0 }
+            Function { name, entry: BlockId(0), insns: vec![], insn_types: vec![], params: vec![], blocks: vec![Block::new()], num_locals: 0 }
         }
 
         fn find(&self, insn: InsnId) -> InsnId {
@@ -392,6 +396,7 @@ mod hir {
         fn new_insn(&mut self, insn: Insn) -> InsnId {
             let result = InsnId(self.insns.len());
             self.insns.push(insn);
+            self.insn_types.push(TEmpty);
             result
         }
 
@@ -410,12 +415,13 @@ mod hir {
                 // TODO(max): Catch double terminators
                 self.blocks[block.0].insns.push(result);
             }
+            self.insn_types.push(TEmpty);
             result
         }
 
         fn is_terminated(&self, block: BlockId) -> bool {
             match self.blocks[block.0].insns.last().map(|insn| &self.insns[insn.0].opcode) {
-                Some(Opcode::Return | Opcode::CondBranch(..) | Opcode::Branch(..)) => true,
+                Some(op) => op.is_terminator(),
                 _ => false,
             }
         }
@@ -516,6 +522,61 @@ mod hir {
                     }
                 }
                 self.blocks[block_id.0].insns = new_insns;
+            }
+        }
+
+        fn type_of(&self, insn_id: InsnId) -> Type {
+            let insn_id = self.find(insn_id);
+            self.insn_types[insn_id.0]
+        }
+
+        fn is_a(&self, insn_id: InsnId, ty: Type) -> bool {
+            self.type_of(insn_id).is_subtype(ty)
+        }
+
+        fn infer_type(&self, insn_id: InsnId) -> Type {
+            let insn_id = self.find(insn_id);
+            let insn = &self.insns[insn_id.0];
+            match &insn.opcode {
+                Opcode::Identity => panic!("should not see Identity after calling find()"),
+                Opcode::Const(Value::Int(_)) => TInt,
+                Opcode::Const(Value::Float(_)) => TFloat,
+                Opcode::Const(Value::Bool(_)) => TBool,
+                Opcode::Const(Value::Str(_)) => TStr,
+                Opcode::Const(Value::ObjectClass) => TClass,
+                Opcode::Const(Value::Nil) => TNil,
+                Opcode::Abort => TVoid,
+                Opcode::Print => TVoid,
+                Opcode::Return | Opcode::Branch(_) | Opcode::CondBranch(_, _) => TVoid,
+                Opcode::Store(_) => TVoid,
+                Opcode::Add if self.is_a(insn.operands[0], TInt) && self.is_a(insn.operands[1], TInt) => TInt,
+                Opcode::Add if self.is_a(insn.operands[0], TFloat) && self.is_a(insn.operands[1], TFloat) => TFloat,
+                Opcode::Add if self.is_a(insn.operands[0], TStr) && self.is_a(insn.operands[1], TStr) => TStr,
+                Opcode::IsTruthy => TCBool,
+                Opcode::NewFrame => TFrame,
+                Opcode::NewClass(_) => TClass,
+                Opcode::GuardInt => TInt,
+                Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => TBool,
+                _ => TAny,
+            }
+        }
+
+        pub fn infer_types(&mut self) {
+            let mut changed = true;
+            let rpo = self.rpo();
+            while changed {
+                changed = false;
+                for block_id in &rpo {
+                    for insn_id in &self.blocks[block_id.0].insns {
+                        let insn_id = self.find(*insn_id);
+                        let old_type = self.insn_types[insn_id.0];
+                        let new_type = self.infer_type(insn_id);
+                        if !old_type.bit_equal(new_type) {
+                            self.insn_types[insn_id.0] = new_type;
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -695,20 +756,28 @@ mod hir {
                     if seen.contains(insn_id) { continue; }
                     seen.insert(insn_id);
                     let Insn { opcode, operands } = &fun.insns[insn_id.0];
+                    let ty = fun.type_of(insn_id);
+                    if ty.bit_equal(TEmpty) {
+                        write!(f, "    {insn_id} = ")?;
+                    } else if ty.bit_equal(TVoid) {
+                        write!(f, "    ")?;
+                    } else {
+                        write!(f, "    {insn_id}:{ty} = ")?;
+                    }
                     match opcode {
                         Opcode::NewClass(ClassDef { name, superclass, .. }) => {
                             let class_name = self.program.interner.lookup(*name);
-                            write!(f, "    {insn_id} = NewClass({class_name}, {superclass})")
+                            write!(f, "NewClass({class_name}, {superclass})")
                         }
                         Opcode::LoadAttr(name) => {
                             let name = self.program.interner.lookup(*name);
-                            write!(f, "    {insn_id} = LoadAttr({name})")
+                            write!(f, "LoadAttr({name})")
                         }
                         Opcode::StoreAttr(name) => {
                             let name = self.program.interner.lookup(*name);
-                            write!(f, "    {insn_id} = StoreAttr({name})")
+                            write!(f, "StoreAttr({name})")
                         }
-                        _ => write!(f, "    {insn_id} = {:?}", opcode),
+                        _ => write!(f, "{:?}", opcode),
                     }?;
                     let mut sep = "";
                     for operand in operands {
@@ -774,6 +843,15 @@ mod hir {
         IsTruthy,
         This,
         Call,
+    }
+
+    impl Opcode {
+        fn is_terminator(&self) -> bool {
+            match self {
+                Opcode::Return | Opcode::Branch(..) | Opcode::CondBranch(..) => true,
+                _ => false,
+            }
+        }
     }
 
     type Operands = SmallVec::<[InsnId; 2]>;
@@ -904,10 +982,12 @@ mod hir {
         }
 
         fn leave_fun(&mut self) {
-            if !self.prog.funs[self.fun().0].is_terminated(self.block()) {
+            let fun = self.fun();
+            if !self.prog.funs[fun.0].is_terminated(self.block()) {
                 let nil = self.push_op(Opcode::Const(Value::Nil));
                 self.push_insn(Opcode::Return, smallvec![nil]);
             }
+            self.prog.funs[fun.0].infer_types();
             if let Some(Context { .. }) = self.context_stack.pop() {
             } else {
                 panic!("Function stack underflow");
@@ -1553,6 +1633,49 @@ mod lexer_tests {
 }
 
 #[cfg(test)]
+mod type_tests {
+    use expect_test::expect;
+    use crate::hir_type::*;
+
+    #[test]
+    fn test_type_order() {
+        assert!(ALL_TYPES.windows(2).all(|w| w[0].1.bits >= w[1].1.bits),
+                "ALL_TYPES should be sorted in decreasing order by bit value");
+    }
+
+    #[test]
+    fn test_int() {
+        assert!(TSmallInt.is_subtype(TInt));
+        assert!(TLargeInt.is_subtype(TInt));
+        assert!(TLargeInt.is_subtype(TAny));
+        assert!(TInt.is_subtype(TAny));
+        assert!(TEmpty.is_subtype(TAny));
+        assert!(TEmpty.is_subtype(TInt));
+
+        assert!(!TInt.is_subtype(TSmallInt));
+        assert!(!TInt.is_subtype(TLargeInt));
+        assert!(!TAny.is_subtype(TInt));
+        assert!(!TAny.is_subtype(TEmpty));
+        assert!(!TInt.is_subtype(TEmpty));
+    }
+
+    #[test]
+    fn test_display_base() {
+        expect!["SmallInt"].assert_eq(&TSmallInt.to_string());
+        expect!["LargeInt"].assert_eq(&TLargeInt.to_string());
+        expect!["Int"].assert_eq(&TInt.to_string());
+        expect!["Any"].assert_eq(&TAny.to_string());
+        expect!["Empty"].assert_eq(&TEmpty.to_string());
+    }
+
+    #[test]
+    fn test_display_union() {
+        expect!["Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).to_string());
+        expect!["CBool|Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).union(TCBool).to_string());
+    }
+}
+
+#[cfg(test)]
 mod parser_tests {
     use super::hir::{Lexer, Parser};
     use expect_test::{expect, Expect};
@@ -1583,10 +1706,10 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Const(Nil)
-                v3 = Return v2
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:Nil = Const(Nil)
+                Return v2
               }
             }
         "#]])
@@ -1598,12 +1721,12 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Const(Int(2))
-                v3 = Equal v1, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:Int = Const(Int(2))
+                v3:Any = Equal v1, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
         "#]])
@@ -1615,12 +1738,12 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Const(Int(2))
-                v3 = NotEqual v1, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:Int = Const(Int(2))
+                v3:Any = NotEqual v1, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
         "#]])
@@ -1634,18 +1757,18 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Const(Int(2))
-                v3 = GuardInt v1
-                v4 = GuardInt v2
-                v5 = Mul v3, v4
-                v6 = Const(Int(3))
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = Const(Nil)
-                v11 = Return v10
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:Int = Const(Int(2))
+                v3:Int = GuardInt v1
+                v4:Int = GuardInt v2
+                v5:Any = Mul v3, v4
+                v6:Int = Const(Int(3))
+                v7:Int = GuardInt v5
+                v8:Int = GuardInt v6
+                v9:Int = Add v7, v8
+                v10:Nil = Const(Nil)
+                Return v10
               }
             }
         "#]])
@@ -1657,18 +1780,18 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Const(Int(2))
-                v3 = Const(Int(3))
-                v4 = GuardInt v2
-                v5 = GuardInt v3
-                v6 = Mul v4, v5
-                v7 = GuardInt v1
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = Const(Nil)
-                v11 = Return v10
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:Int = Const(Int(2))
+                v3:Int = Const(Int(3))
+                v4:Int = GuardInt v2
+                v5:Int = GuardInt v3
+                v6:Any = Mul v4, v5
+                v7:Int = GuardInt v1
+                v8:Int = GuardInt v6
+                v9:Int = Add v7, v8
+                v10:Nil = Const(Nil)
+                Return v10
               }
             }
         "#]])
@@ -1680,14 +1803,14 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Const(Int(2))
-                v3 = GuardInt v1
-                v4 = GuardInt v2
-                v5 = Add v3, v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:Int = Const(Int(2))
+                v3:Int = GuardInt v1
+                v4:Int = GuardInt v2
+                v5:Int = Add v3, v4
+                v6:Nil = Const(Nil)
+                Return v6
               }
             }
         "#]])
@@ -1699,20 +1822,20 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = IsTruthy v1
-                v3 = CondBranch(bb1, bb2) v2
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:CBool = IsTruthy v1
+                CondBranch(bb1, bb2) v2
               }
               bb2 {
-                v4 = Const(Int(2))
-                v5 = Branch(bb1)
+                v4:Int = Const(Int(2))
+                Branch(bb1)
               }
               bb1 {
                 v6 = Phi v1, v4
-                v7 = Print v6
-                v8 = Const(Nil)
-                v9 = Return v8
+                Print v6
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
         "#]])
@@ -1724,29 +1847,29 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = IsTruthy v1
-                v3 = CondBranch(bb1, bb2) v2
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:CBool = IsTruthy v1
+                CondBranch(bb1, bb2) v2
               }
               bb2 {
-                v4 = Const(Int(2))
-                v5 = Branch(bb1)
+                v4:Int = Const(Int(2))
+                Branch(bb1)
               }
               bb1 {
                 v6 = Phi v1, v4
-                v7 = IsTruthy v6
-                v8 = CondBranch(bb3, bb4) v7
+                v7:CBool = IsTruthy v6
+                CondBranch(bb3, bb4) v7
               }
               bb4 {
-                v9 = Const(Int(3))
-                v10 = Branch(bb3)
+                v9:Int = Const(Int(3))
+                Branch(bb3)
               }
               bb3 {
                 v11 = Phi v6, v9
-                v12 = Print v11
-                v13 = Const(Nil)
-                v14 = Return v13
+                Print v11
+                v13:Nil = Const(Nil)
+                Return v13
               }
             }
         "#]])
@@ -1760,14 +1883,14 @@ mod parser_tests {
     Entry: fn0
     fn0: fun <toplevel>() (entry bb0) {
       bb0 {
-        v0 = NewFrame
-        v1 = Const(Int(1))
-        v2 = Const(Int(2))
-        v3 = GuardInt v1
-        v4 = GuardInt v2
-        v5 = Add v3, v4
-        v6 = Const(Nil)
-        v7 = Return v6
+        v0:Frame = NewFrame
+        v1:Int = Const(Int(1))
+        v2:Int = Const(Int(2))
+        v3:Int = GuardInt v1
+        v4:Int = GuardInt v2
+        v5:Int = Add v3, v4
+        v6:Nil = Const(Nil)
+        Return v6
       }
     }
 "#]])
@@ -1779,15 +1902,15 @@ mod parser_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Const(Int(2))
-                v3 = GuardInt v1
-                v4 = GuardInt v2
-                v5 = Add v3, v4
-                v6 = Print v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                v2:Int = Const(Int(2))
+                v3:Int = GuardInt v1
+                v4:Int = GuardInt v2
+                v5:Int = Add v3, v4
+                Print v5
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -1814,13 +1937,13 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Print v3
-                v5 = Const(Nil)
-                v6 = Return v5
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                Print v3
+                v5:Nil = Const(Nil)
+                Return v5
               }
             }
         "#]])
@@ -1833,11 +1956,11 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
         "#]])
@@ -1862,16 +1985,16 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@0) v0, v3
-                v5 = Load(@0) v0
-                v6 = Load(@0) v0
-                v7 = Print v6
-                v8 = Const(Nil)
-                v9 = Return v8
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@0) v0, v3
+                v5:Any = Load(@0) v0
+                v6:Any = Load(@0) v0
+                Print v6
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
         "#]])
@@ -1891,26 +2014,26 @@ print c;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@1) v0, v3
-                v5 = Const(Int(3))
-                v6 = Store(@2) v0, v5
-                v7 = Load(@2) v0
-                v8 = Store(@1) v0, v7
-                v9 = Load(@1) v0
-                v10 = Store(@0) v0, v9
-                v11 = Load(@0) v0
-                v12 = Load(@0) v0
-                v13 = Print v12
-                v14 = Load(@1) v0
-                v15 = Print v14
-                v16 = Load(@2) v0
-                v17 = Print v16
-                v18 = Const(Nil)
-                v19 = Return v18
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@1) v0, v3
+                v5:Int = Const(Int(3))
+                Store(@2) v0, v5
+                v7:Any = Load(@2) v0
+                Store(@1) v0, v7
+                v9:Any = Load(@1) v0
+                Store(@0) v0, v9
+                v11:Any = Load(@0) v0
+                v12:Any = Load(@0) v0
+                Print v12
+                v14:Any = Load(@1) v0
+                Print v14
+                v16:Any = Load(@2) v0
+                Print v16
+                v18:Nil = Const(Nil)
+                Return v18
               }
             }
         "#]])
@@ -1926,15 +2049,15 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@1) v0, v3
-                v5 = Load(@1) v0
-                v6 = Print v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@1) v0, v3
+                v5:Any = Load(@1) v0
+                Print v5
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -1947,9 +2070,9 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]])
@@ -1970,30 +2093,30 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = IsTruthy v3
-                v5 = CondBranch(bb1, bb2) v4
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                v4:CBool = IsTruthy v3
+                CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v9 = Const(Int(4))
-                v10 = Store(@0) v0, v9
-                v11 = Load(@0) v0
-                v12 = Branch(bb3)
+                v9:Int = Const(Int(4))
+                Store(@0) v0, v9
+                v11:Any = Load(@0) v0
+                Branch(bb3)
               }
               bb1 {
-                v6 = Const(Int(3))
-                v7 = Store(@0) v0, v6
-                v8 = Load(@0) v0
-                v13 = Branch(bb3)
+                v6:Int = Const(Int(3))
+                Store(@0) v0, v6
+                v8:Any = Load(@0) v0
+                Branch(bb3)
               }
               bb3 {
-                v14 = Load(@0) v0
-                v15 = Print v14
-                v16 = Const(Nil)
-                v17 = Return v16
+                v14:Any = Load(@0) v0
+                Print v14
+                v16:Nil = Const(Nil)
+                Return v16
               }
             }
         "#]])
@@ -2006,20 +2129,20 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Branch(bb1)
+                v0:Frame = NewFrame
+                Branch(bb1)
               }
               bb1 {
-                v2 = Const(Bool(true))
-                v3 = IsTruthy v2
-                v4 = CondBranch(bb2, bb3) v3
+                v2:Bool = Const(Bool(true))
+                v3:CBool = IsTruthy v2
+                CondBranch(bb2, bb3) v3
               }
               bb3 {
-                v6 = Const(Nil)
-                v7 = Return v6
+                v6:Nil = Const(Nil)
+                Return v6
               }
               bb2 {
-                v5 = Branch(bb1)
+                Branch(bb1)
               }
             }
         "#]]);
@@ -2032,22 +2155,22 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Branch(bb1)
+                v0:Frame = NewFrame
+                Branch(bb1)
               }
               bb1 {
-                v2 = Const(Bool(true))
-                v3 = IsTruthy v2
-                v4 = CondBranch(bb2, bb3) v3
+                v2:Bool = Const(Bool(true))
+                v3:CBool = IsTruthy v2
+                CondBranch(bb2, bb3) v3
               }
               bb3 {
-                v8 = Const(Nil)
-                v9 = Return v8
+                v8:Nil = Const(Nil)
+                Return v8
               }
               bb2 {
-                v5 = Const(Int(1))
-                v6 = Print v5
-                v7 = Branch(bb1)
+                v5:Int = Const(Int(1))
+                Print v5
+                Branch(bb1)
               }
             }
         "#]]);
@@ -2062,28 +2185,28 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Branch(bb1)
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                Branch(bb1)
               }
               bb1 {
-                v4 = Load(@0) v0
-                v5 = Const(Int(10))
-                v6 = GuardInt v4
-                v7 = GuardInt v5
-                v8 = Less v6, v7
-                v9 = IsTruthy v8
-                v10 = CondBranch(bb2, bb3) v9
+                v4:Any = Load(@0) v0
+                v5:Int = Const(Int(10))
+                v6:Int = GuardInt v4
+                v7:Int = GuardInt v5
+                v8:Bool = Less v6, v7
+                v9:CBool = IsTruthy v8
+                CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v14 = Const(Nil)
-                v15 = Return v14
+                v14:Nil = Const(Nil)
+                Return v14
               }
               bb2 {
-                v11 = Load(@0) v0
-                v12 = Print v11
-                v13 = Branch(bb1)
+                v11:Any = Load(@0) v0
+                Print v11
+                Branch(bb1)
               }
             }
         "#]]);
@@ -2098,35 +2221,35 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Branch(bb1)
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                Branch(bb1)
               }
               bb1 {
-                v4 = Load(@0) v0
-                v5 = Const(Int(10))
-                v6 = GuardInt v4
-                v7 = GuardInt v5
-                v8 = Less v6, v7
-                v9 = IsTruthy v8
-                v10 = CondBranch(bb2, bb3) v9
+                v4:Any = Load(@0) v0
+                v5:Int = Const(Int(10))
+                v6:Int = GuardInt v4
+                v7:Int = GuardInt v5
+                v8:Bool = Less v6, v7
+                v9:CBool = IsTruthy v8
+                CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v21 = Const(Nil)
-                v22 = Return v21
+                v21:Nil = Const(Nil)
+                Return v21
               }
               bb2 {
-                v11 = Load(@0) v0
-                v12 = Print v11
-                v13 = Load(@0) v0
-                v14 = Const(Int(1))
-                v15 = GuardInt v13
-                v16 = GuardInt v14
-                v17 = Add v15, v16
-                v18 = Store(@0) v0, v17
-                v19 = Load(@0) v0
-                v20 = Branch(bb1)
+                v11:Any = Load(@0) v0
+                Print v11
+                v13:Any = Load(@0) v0
+                v14:Int = Const(Int(1))
+                v15:Int = GuardInt v13
+                v16:Int = GuardInt v14
+                v17:Int = Add v15, v16
+                Store(@0) v0, v17
+                v19:Any = Load(@0) v0
+                Branch(bb1)
               }
             }
         "#]]);
@@ -2138,18 +2261,18 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun empty() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]])
@@ -2170,15 +2293,15 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@1) v0, v3
-                v5 = Load(@0) v0
-                v6 = Print v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@1) v0, v3
+                v5:Any = Load(@0) v0
+                Print v5
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -2190,18 +2313,18 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun empty() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]])
@@ -2213,19 +2336,19 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Return v3
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                Return v3
               }
             }
         "#]])
@@ -2237,23 +2360,23 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun inc(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Const(Int(1))
-                v5 = GuardInt v3
-                v6 = GuardInt v4
-                v7 = Add v5, v6
-                v8 = Return v7
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Int = Const(Int(1))
+                v5:Int = GuardInt v3
+                v6:Int = GuardInt v4
+                v7:Int = Add v5, v6
+                Return v7
               }
             }
         "#]])
@@ -2265,24 +2388,24 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f(v1, v3) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v4 = Store(@1) v0, v3
-                v5 = Load(@0) v0
-                v6 = Load(@1) v0
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = Return v9
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                Store(@1) v0, v3
+                v5:Any = Load(@0) v0
+                v6:Any = Load(@1) v0
+                v7:Int = GuardInt v5
+                v8:Int = GuardInt v6
+                v9:Int = Add v7, v8
+                Return v9
               }
             }
         "#]])
@@ -2297,19 +2420,19 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]]);
@@ -2332,20 +2455,20 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Call v3
-                v5 = Const(Nil)
-                v6 = Return v5
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Any = Call v3
+                v5:Nil = Const(Nil)
+                Return v5
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]]);
@@ -2360,21 +2483,21 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Const(Int(1))
-                v5 = Call v3, v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Int = Const(Int(1))
+                v5:Any = Call v3, v4
+                v6:Nil = Const(Nil)
+                Return v6
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]]);
@@ -2389,23 +2512,23 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Const(Int(1))
-                v5 = Const(Int(2))
-                v6 = Const(Int(3))
-                v7 = Call v3, v4, v5, v6
-                v8 = Const(Nil)
-                v9 = Return v8
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Int = Const(Int(1))
+                v5:Int = Const(Int(2))
+                v6:Int = Const(Int(3))
+                v7:Any = Call v3, v4, v5, v6
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]]);
@@ -2420,28 +2543,28 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(1))
-                v4 = Load(@0) v0
-                v5 = Call v4
-                v6 = Const(Int(2))
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Add v7, v8
-                v10 = GuardInt v3
-                v11 = GuardInt v9
-                v12 = Add v10, v11
-                v13 = Const(Nil)
-                v14 = Return v13
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Int = Const(Int(1))
+                v4:Any = Load(@0) v0
+                v5:Any = Call v4
+                v6:Int = Const(Int(2))
+                v7:Int = GuardInt v5
+                v8:Int = GuardInt v6
+                v9:Int = Add v7, v8
+                v10:Int = GuardInt v3
+                v11:Int = GuardInt v9
+                v12:Int = Add v10, v11
+                v13:Nil = Const(Nil)
+                Return v13
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]]);
@@ -2456,28 +2579,28 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(1))
-                v4 = Load(@0) v0
-                v5 = Call v4
-                v6 = Const(Int(2))
-                v7 = GuardInt v5
-                v8 = GuardInt v6
-                v9 = Mul v7, v8
-                v10 = GuardInt v3
-                v11 = GuardInt v9
-                v12 = Mul v10, v11
-                v13 = Const(Nil)
-                v14 = Return v13
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Int = Const(Int(1))
+                v4:Any = Load(@0) v0
+                v5:Any = Call v4
+                v6:Int = Const(Int(2))
+                v7:Int = GuardInt v5
+                v8:Int = GuardInt v6
+                v9:Any = Mul v7, v8
+                v10:Int = GuardInt v3
+                v11:Int = GuardInt v9
+                v12:Any = Mul v10, v11
+                v13:Nil = Const(Nil)
+                Return v13
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]]);
@@ -2492,23 +2615,23 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Const(Int(1))
-                v5 = Call v3, v4
-                v6 = Const(Int(2))
-                v7 = Call v5, v6
-                v8 = Const(Nil)
-                v9 = Return v8
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Int = Const(Int(1))
+                v5:Any = Call v3, v4
+                v6:Int = Const(Int(2))
+                v7:Any = Call v5, v6
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Nil)
-                v2 = Return v1
+                v0:Frame = NewFrame
+                v1:Nil = Const(Nil)
+                Return v1
               }
             }
         "#]]);
@@ -2525,21 +2648,21 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = GuardInstance v3
-                v5 = LoadAttr(b) v4
-                v6 = Return v5
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Any = GuardInstance v3
+                v5:Any = LoadAttr(b) v4
+                Return v5
               }
             }
         "#]]);
@@ -2551,23 +2674,23 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = GuardInstance v3
-                v5 = LoadAttr(b) v4
-                v6 = GuardInstance v5
-                v7 = LoadAttr(c) v6
-                v8 = Return v7
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Any = GuardInstance v3
+                v5:Any = LoadAttr(b) v4
+                v6:Any = GuardInstance v5
+                v7:Any = LoadAttr(c) v6
+                Return v7
               }
             }
         "#]]);
@@ -2579,12 +2702,12 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
         "#]])
@@ -2596,23 +2719,23 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = Const(Int(1))
-                v5 = GuardInstance v3
-                v6 = StoreAttr(b) v5, v4
-                v7 = Const(Nil)
-                v8 = Return v7
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Int = Const(Int(1))
+                v5:Any = GuardInstance v3
+                v6:Any = StoreAttr(b) v5, v4
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]]);
@@ -2624,25 +2747,25 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = GuardInstance v3
-                v5 = LoadAttr(b) v4
-                v6 = Const(Int(1))
-                v7 = GuardInstance v5
-                v8 = StoreAttr(c) v7, v6
-                v9 = Const(Nil)
-                v10 = Return v9
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Any = GuardInstance v3
+                v5:Any = LoadAttr(b) v4
+                v6:Int = Const(Int(1))
+                v7:Any = GuardInstance v5
+                v8:Any = StoreAttr(c) v7, v6
+                v9:Nil = Const(Nil)
+                Return v9
               }
             }
         "#]]);
@@ -2655,21 +2778,21 @@ print a;
                 Entry: fn0
                 fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
-                    v0 = NewFrame
-                    v1 = NewClosure(fn1)
-                    v2 = Store(@0) v0, v1
-                    v3 = Load(@0) v0
-                    v4 = GuardInstance v3
-                    v5 = LoadAttr(a) v4
-                    v6 = Const(Nil)
-                    v7 = Return v6
+                    v0:Frame = NewFrame
+                    v1:Any = NewClosure(fn1)
+                    Store(@0) v0, v1
+                    v3:Any = Load(@0) v0
+                    v4:Any = GuardInstance v3
+                    v5:Any = LoadAttr(a) v4
+                    v6:Nil = Const(Nil)
+                    Return v6
                   }
                 }
                 fn1: fun f() (entry bb0) {
                   bb0 {
-                    v0 = NewFrame
-                    v1 = Const(Nil)
-                    v2 = Return v1
+                    v0:Frame = NewFrame
+                    v1:Nil = Const(Nil)
+                    Return v1
                   }
                 }
             "#]]);
@@ -2682,22 +2805,22 @@ print a;
                 Entry: fn0
                 fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
-                    v0 = NewFrame
-                    v1 = NewClosure(fn1)
-                    v2 = Store(@0) v0, v1
-                    v3 = Load(@0) v0
-                    v4 = Const(Int(1))
-                    v5 = GuardInstance v3
-                    v6 = StoreAttr(a) v5, v4
-                    v7 = Const(Nil)
-                    v8 = Return v7
+                    v0:Frame = NewFrame
+                    v1:Any = NewClosure(fn1)
+                    Store(@0) v0, v1
+                    v3:Any = Load(@0) v0
+                    v4:Int = Const(Int(1))
+                    v5:Any = GuardInstance v3
+                    v6:Any = StoreAttr(a) v5, v4
+                    v7:Nil = Const(Nil)
+                    Return v7
                   }
                 }
                 fn1: fun f() (entry bb0) {
                   bb0 {
-                    v0 = NewFrame
-                    v1 = Const(Nil)
-                    v2 = Return v1
+                    v0:Frame = NewFrame
+                    v1:Nil = Const(Nil)
+                    Return v1
                   }
                 }
             "#]]);
@@ -2709,23 +2832,23 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Load(@0) v0
-                v4 = GuardInstance v3
-                v5 = LoadAttr(b) v4
-                v6 = Call v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Any = Load(@0) v0
+                v4:Any = GuardInstance v3
+                v5:Any = LoadAttr(b) v4
+                v6:Any = Call v5
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -2738,14 +2861,14 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Load(@0) v0
-                v5 = Print v4
-                v6 = Const(Nil)
-                v7 = Return v6
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Any = Load(@0) v0
+                Print v4
+                v6:Nil = Const(Nil)
+                Return v6
               }
             }
         "#]])
@@ -2759,20 +2882,20 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
             fn1: fun empty(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
         "#]])
@@ -2786,21 +2909,21 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
             fn1: fun empty(v1, v3) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v4 = Store(@1) v0, v3
-                v5 = Const(Nil)
-                v6 = Return v5
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                Store(@1) v0, v3
+                v5:Nil = Const(Nil)
+                Return v5
               }
             }
         "#]])
@@ -2814,22 +2937,22 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
             fn1: fun empty(v1, v3, v5) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v4 = Store(@1) v0, v3
-                v6 = Store(@2) v0, v5
-                v7 = Const(Nil)
-                v8 = Return v7
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                Store(@1) v0, v3
+                Store(@2) v0, v5
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -2844,28 +2967,28 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Const(Nil)
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
             fn1: fun empty0(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn2: fun empty1(v1) (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
         "#]])
@@ -2878,16 +3001,16 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Load(@0) v0
-                v5 = GuardClass v4
-                v6 = NewClass(D, v5)
-                v7 = Store(@1) v0, v6
-                v8 = Const(Nil)
-                v9 = Return v8
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Any = Load(@0) v0
+                v5:Any = GuardClass v4
+                v6:Class = NewClass(D, v5)
+                Store(@1) v0, v6
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
         "#]])
@@ -2907,14 +3030,14 @@ print a;
                 Entry: fn0
                 fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
-                    v0 = NewFrame
-                    v1 = Const(ObjectClass)
-                    v2 = NewClass(C, v1)
-                    v3 = Store(@0) v0, v2
-                    v4 = Load(@0) v0
-                    v5 = Call v4
-                    v6 = Const(Nil)
-                    v7 = Return v6
+                    v0:Frame = NewFrame
+                    v1:Class = Const(ObjectClass)
+                    v2:Class = NewClass(C, v1)
+                    Store(@0) v0, v2
+                    v4:Any = Load(@0) v0
+                    v5:Any = Call v4
+                    v6:Nil = Const(Nil)
+                    Return v6
                   }
                 }
             "#]])
@@ -2927,16 +3050,16 @@ print a;
                 Entry: fn0
                 fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
-                    v0 = NewFrame
-                    v1 = Const(ObjectClass)
-                    v2 = NewClass(C, v1)
-                    v3 = Store(@0) v0, v2
-                    v4 = Load(@0) v0
-                    v5 = Const(Int(1))
-                    v6 = Const(Int(2))
-                    v7 = Call v4, v5, v6
-                    v8 = Const(Nil)
-                    v9 = Return v8
+                    v0:Frame = NewFrame
+                    v1:Class = Const(ObjectClass)
+                    v2:Class = NewClass(C, v1)
+                    Store(@0) v0, v2
+                    v4:Any = Load(@0) v0
+                    v5:Int = Const(Int(1))
+                    v6:Int = Const(Int(2))
+                    v7:Any = Call v4, v5, v6
+                    v8:Nil = Const(Nil)
+                    Return v8
                   }
                 }
             "#]])
@@ -2948,21 +3071,21 @@ print a;
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = NewClosure(fn1)
-                v2 = Store(@0) v0, v1
-                v3 = Const(Nil)
-                v4 = Return v3
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
               }
             }
             fn1: fun f() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(ObjectClass)
-                v2 = NewClass(C, v1)
-                v3 = Store(@0) v0, v2
-                v4 = Load(@0) v0
-                v5 = Return v4
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Any = Load(@0) v0
+                Return v4
               }
             }
         "#]])
@@ -3000,6 +3123,7 @@ mod opt_tests {
         let mut actual = parser.prog;
         for fun in &mut actual.funs {
             fun.unbox_locals();
+            fun.infer_types();
             fun.eliminate_dead_code();
         }
         expect.assert_eq(format!("{actual}").as_str());
@@ -3012,8 +3136,8 @@ mod opt_tests {
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v4 = Const(Nil)
-                v5 = Return v4
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
         "#]])
@@ -3028,12 +3152,12 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v4 = Print v1
-                v5 = Const(Nil)
-                v6 = Return v5
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                Print v1
+                v5:Nil = Const(Nil)
+                Return v5
               }
             }
         "#]])
@@ -3050,16 +3174,16 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@0) v0, v3
-                v6 = Const(Int(3))
-                v7 = Store(@0) v0, v6
-                v10 = Print v6
-                v11 = Const(Nil)
-                v12 = Return v11
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@0) v0, v3
+                v6:Int = Const(Int(3))
+                Store(@0) v0, v6
+                Print v6
+                v11:Nil = Const(Nil)
+                Return v11
               }
             }
         "#]])
@@ -3075,13 +3199,13 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v4 = Store(@0) v0, v1
-                v7 = Print v1
-                v8 = Const(Nil)
-                v9 = Return v8
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                Store(@0) v0, v1
+                Print v1
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
         "#]])
@@ -3098,15 +3222,15 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@1) v0, v3
-                v6 = Store(@0) v0, v3
-                v9 = Print v3
-                v10 = Const(Nil)
-                v11 = Return v10
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@1) v0, v3
+                Store(@0) v0, v3
+                Print v3
+                v10:Nil = Const(Nil)
+                Return v10
               }
             }
         "#]])
@@ -3126,20 +3250,20 @@ print c;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@1) v0, v3
-                v5 = Const(Int(3))
-                v6 = Store(@2) v0, v5
-                v8 = Store(@1) v0, v5
-                v10 = Store(@0) v0, v5
-                v13 = Print v5
-                v15 = Print v5
-                v17 = Print v5
-                v18 = Const(Nil)
-                v19 = Return v18
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@1) v0, v3
+                v5:Int = Const(Int(3))
+                Store(@2) v0, v5
+                Store(@1) v0, v5
+                Store(@0) v0, v5
+                Print v5
+                Print v5
+                Print v5
+                v18:Nil = Const(Nil)
+                Return v18
               }
             }
         "#]])
@@ -3155,14 +3279,14 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = Store(@1) v0, v3
-                v6 = Print v3
-                v7 = Const(Nil)
-                v8 = Return v7
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                Store(@1) v0, v3
+                Print v3
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -3182,28 +3306,28 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Const(Int(2))
-                v4 = IsTruthy v3
-                v5 = CondBranch(bb1, bb2) v4
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                v3:Int = Const(Int(2))
+                v4:CBool = IsTruthy v3
+                CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v9 = Const(Int(4))
-                v10 = Store(@0) v0, v9
-                v12 = Branch(bb3)
+                v9:Int = Const(Int(4))
+                Store(@0) v0, v9
+                Branch(bb3)
               }
               bb1 {
-                v6 = Const(Int(3))
-                v7 = Store(@0) v0, v6
-                v13 = Branch(bb3)
+                v6:Int = Const(Int(3))
+                Store(@0) v0, v6
+                Branch(bb3)
               }
               bb3 {
-                v18 = Phi v6, v9
-                v15 = Print v18
-                v16 = Const(Nil)
-                v17 = Return v16
+                v18:Any = Phi v6, v9
+                Print v18
+                v16:Nil = Const(Nil)
+                Return v16
               }
             }
         "#]])
@@ -3218,32 +3342,32 @@ print a;",
             Entry: fn0
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
-                v0 = NewFrame
-                v1 = Const(Int(1))
-                v2 = Store(@0) v0, v1
-                v3 = Branch(bb1)
+                v0:Frame = NewFrame
+                v1:Int = Const(Int(1))
+                Store(@0) v0, v1
+                Branch(bb1)
               }
               bb1 {
-                v23 = Phi v1, v17
-                v5 = Const(Int(10))
-                v6 = GuardInt v23
-                v7 = GuardInt v5
-                v8 = Less v6, v7
-                v9 = IsTruthy v8
-                v10 = CondBranch(bb2, bb3) v9
+                v23:Any = Phi v1, v17
+                v5:Int = Const(Int(10))
+                v6:Int = GuardInt v23
+                v7:Int = GuardInt v5
+                v8:Bool = Less v6, v7
+                v9:CBool = IsTruthy v8
+                CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v21 = Const(Nil)
-                v22 = Return v21
+                v21:Nil = Const(Nil)
+                Return v21
               }
               bb2 {
-                v12 = Print v23
-                v14 = Const(Int(1))
-                v15 = GuardInt v23
-                v16 = GuardInt v14
-                v17 = Add v15, v16
-                v18 = Store(@0) v0, v17
-                v20 = Branch(bb1)
+                Print v23
+                v14:Int = Const(Int(1))
+                v15:Int = GuardInt v23
+                v16:Int = GuardInt v14
+                v17:Int = Add v15, v16
+                Store(@0) v0, v17
+                Branch(bb1)
               }
             }
         "#]]);
