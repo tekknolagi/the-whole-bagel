@@ -64,22 +64,22 @@ def add_union(name, types):
 
 add_union("Immediate", [SmallInt, SmallStr, Bool])
 
-all_types = Any.topo()
+types_and_unions = Any.topo()+all_unions
 num_bits = 0
-for ty in all_types+all_unions:
+for ty in types_and_unions:
     if not ty.children:
         ty.bits = 1 << num_bits
         num_bits += 1
     else:
         ty.bits = reduce(lambda acc, ty: acc | ty.bits, ty.children, 0)
-all_types.append(Type("Empty", [], 0))
+types_and_unions.append(Type("Empty", [], 0))
 
-for ty in sorted(all_types, key=lambda ty: ty.bits):
+for ty in sorted(types_and_unions, key=lambda ty: ty.bits):
     print(f"pub const T{ty.name}: Type = Type::from_bits(0x{ty.bits:x});")
 print(f"pub const NUM_TYPE_BITS: usize = {num_bits};")
 
 
-print(f"pub const ALL_TYPES: [(&'static str, Type); {len(all_types)}] = [")
-for ty in sorted(all_types, key=lambda ty: -ty.bits):
+print(f"pub const ALL_TYPES: [(&'static str, Type); {len(types_and_unions)}] = [")
+for ty in sorted(types_and_unions, key=lambda ty: -ty.bits):
     print(f"    (\"{ty.name}\", T{ty.name}),")
 print("];")

@@ -5,6 +5,7 @@ pub const TInt: Type = Type::from_bits(0x3);
 pub const TFloat: Type = Type::from_bits(0x4);
 pub const TBool: Type = Type::from_bits(0x8);
 pub const TSmallStr: Type = Type::from_bits(0x10);
+pub const TImmediate: Type = Type::from_bits(0x19);
 pub const TLargeStr: Type = Type::from_bits(0x20);
 pub const TStr: Type = Type::from_bits(0x30);
 pub const TClass: Type = Type::from_bits(0x40);
@@ -28,7 +29,7 @@ pub const TPrimitive: Type = Type::from_bits(0x7fc00);
 pub const TVoid: Type = Type::from_bits(0x80000);
 pub const TAny: Type = Type::from_bits(0xfffff);
 pub const NUM_TYPE_BITS: usize = 20;
-pub const ALL_TYPES: [(&'static str, Type); 29] = [
+pub const ALL_TYPES: [(&'static str, Type); 30] = [
     ("Any", TAny),
     ("Void", TVoid),
     ("Primitive", TPrimitive),
@@ -51,6 +52,7 @@ pub const ALL_TYPES: [(&'static str, Type); 29] = [
     ("Class", TClass),
     ("Str", TStr),
     ("LargeStr", TLargeStr),
+    ("Immediate", TImmediate),
     ("SmallStr", TSmallStr),
     ("Bool", TBool),
     ("Float", TFloat),
