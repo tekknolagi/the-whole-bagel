@@ -25,7 +25,6 @@ class Type:
         _topo(self)
         return result
 
-
     def __hash__(self) -> int:
         return id(self)
 
