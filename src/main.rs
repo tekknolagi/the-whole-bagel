@@ -355,6 +355,10 @@ mod hir {
         fn new() -> Block {
             Block { phis: vec![], insns: vec![] }
         }
+
+        pub fn insns(&self) -> impl Iterator<Item = InsnId> + '_ {
+            self.phis.iter().chain(&self.insns).map(|&insn| insn)
+        }
     }
 
     #[derive(Debug)]
@@ -703,8 +707,8 @@ mod hir {
             for block_id in fun.rpo() {
                 writeln!(f, "  {block_id} {{")?;
                 let block = &fun.blocks[block_id.0];
-                for insn_id in block.phis.iter().chain(&block.insns) {
-                    let insn_id = fun.find(*insn_id);
+                for insn_id in block.insns() {
+                    let insn_id = fun.find(insn_id);
                     if seen.contains(insn_id) { continue; }
                     seen.insert(insn_id);
                     let Insn { opcode, operands } = &fun.insns[insn_id.0];
@@ -1445,8 +1449,8 @@ mod lir {
             for block_id in hir_fun.rpo() {
                 let mut block = fun.add_block(format!("{block_id}"));
                 let hir_block = hir_fun.block(block_id);
-                for insn_id in &hir_block.insns {
-                    self.compile_insn(&mut block, hir_fun, *insn_id);
+                for insn_id in hir_block.insns() {
+                    self.compile_insn(&mut block, hir_fun, insn_id);
                 }
             }
             self.module.add_function(fun);
@@ -3312,13 +3316,11 @@ print a;",
                 v20 = Return v19
               }
               bb2 {
-                v12 = Print v23
+                v12 = Print v21
                 v14 = Const(Int(1))
-                v15 = GuardInt v23
-                v16 = GuardInt v14
-                v17 = Add v15, v16
-                v18 = Store(@0) v0, v17
-                v20 = Branch(bb1)
+                v15 = Add v21, v14
+                v16 = Store(@0) v0, v15
+                v18 = Branch(bb1)
               }
             }
         "#]]);
