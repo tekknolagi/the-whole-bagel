@@ -143,6 +143,7 @@ mod hir {
     use smallvec::{smallvec, SmallVec};
     use std::collections::HashMap;
     use std::collections::VecDeque;
+    use crate::hir_type::*;
 
     pub struct Lexer<'a> {
         chars: std::iter::Peekable<std::str::Chars<'a>>,
@@ -354,8 +355,6 @@ mod hir {
         }
     }
 
-    use crate::hir_type::{Type, types};
-
     #[derive(Debug)]
     pub struct Function {
         name: NameId,
@@ -397,7 +396,7 @@ mod hir {
         fn new_insn(&mut self, insn: Insn) -> InsnId {
             let result = InsnId(self.insns.len());
             self.insns.push(insn);
-            self.insn_types.push(types::TEmpty);
+            self.insn_types.push(TEmpty);
             result
         }
 
@@ -416,7 +415,7 @@ mod hir {
                 // TODO(max): Catch double terminators
                 self.blocks[block.0].insns.push(result);
             }
-            self.insn_types.push(types::TEmpty);
+            self.insn_types.push(TEmpty);
             result
         }
 
@@ -540,25 +539,25 @@ mod hir {
             let insn = &self.insns[insn_id.0];
             match &insn.opcode {
                 Opcode::Identity => panic!("should not see Identity after calling find()"),
-                Opcode::Const(Value::Int(_)) => types::TInt,
-                Opcode::Const(Value::Float(_)) => types::TFloat,
-                Opcode::Const(Value::Bool(_)) => types::TBool,
-                Opcode::Const(Value::Str(_)) => types::TStr,
-                Opcode::Const(Value::ObjectClass) => types::TClass,
-                Opcode::Const(Value::Nil) => types::TNil,
-                Opcode::Abort => types::TVoid,
-                Opcode::Print => types::TVoid,
-                Opcode::Return | Opcode::Branch(_) | Opcode::CondBranch(_, _) => types::TVoid,
-                Opcode::Store(_) => types::TVoid,
-                Opcode::Add if self.is_a(insn.operands[0], types::TInt) && self.is_a(insn.operands[1], types::TInt) => types::TInt,
-                Opcode::Add if self.is_a(insn.operands[0], types::TFloat) && self.is_a(insn.operands[1], types::TFloat) => types::TFloat,
-                Opcode::Add if self.is_a(insn.operands[0], types::TStr) && self.is_a(insn.operands[1], types::TStr) => types::TStr,
-                Opcode::IsTruthy => types::TCBool,
-                Opcode::NewFrame => types::TFrame,
-                Opcode::NewClass(_) => types::TClass,
-                Opcode::GuardInt => types::TInt,
-                Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => types::TBool,
-                _ => types::TAny,
+                Opcode::Const(Value::Int(_)) => TInt,
+                Opcode::Const(Value::Float(_)) => TFloat,
+                Opcode::Const(Value::Bool(_)) => TBool,
+                Opcode::Const(Value::Str(_)) => TStr,
+                Opcode::Const(Value::ObjectClass) => TClass,
+                Opcode::Const(Value::Nil) => TNil,
+                Opcode::Abort => TVoid,
+                Opcode::Print => TVoid,
+                Opcode::Return | Opcode::Branch(_) | Opcode::CondBranch(_, _) => TVoid,
+                Opcode::Store(_) => TVoid,
+                Opcode::Add if self.is_a(insn.operands[0], TInt) && self.is_a(insn.operands[1], TInt) => TInt,
+                Opcode::Add if self.is_a(insn.operands[0], TFloat) && self.is_a(insn.operands[1], TFloat) => TFloat,
+                Opcode::Add if self.is_a(insn.operands[0], TStr) && self.is_a(insn.operands[1], TStr) => TStr,
+                Opcode::IsTruthy => TCBool,
+                Opcode::NewFrame => TFrame,
+                Opcode::NewClass(_) => TClass,
+                Opcode::GuardInt => TInt,
+                Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => TBool,
+                _ => TAny,
             }
         }
 
@@ -758,9 +757,9 @@ mod hir {
                     seen.insert(insn_id);
                     let Insn { opcode, operands } = &fun.insns[insn_id.0];
                     let ty = fun.type_of(insn_id);
-                    if ty.bit_equal(types::TEmpty) {
+                    if ty.bit_equal(TEmpty) {
                         write!(f, "    {insn_id} = ")?;
-                    } else if ty.bit_equal(types::TVoid) {
+                    } else if ty.bit_equal(TVoid) {
                         write!(f, "    ")?;
                     } else {
                         write!(f, "    {insn_id}:{ty} = ")?;
@@ -1636,7 +1635,7 @@ mod lexer_tests {
 #[cfg(test)]
 mod type_tests {
     use expect_test::expect;
-    use crate::hir_type::ALL_TYPES;
+    use crate::hir_type::*;
 
     #[test]
     fn test_type_order() {
@@ -1646,7 +1645,6 @@ mod type_tests {
 
     #[test]
     fn test_int() {
-        use crate::hir_type::types::*;
         assert!(TSmallInt.is_subtype(TInt));
         assert!(TLargeInt.is_subtype(TInt));
         assert!(TLargeInt.is_subtype(TAny));
@@ -1663,7 +1661,6 @@ mod type_tests {
 
     #[test]
     fn test_display_base() {
-        use crate::hir_type::types::*;
         expect!["SmallInt"].assert_eq(&TSmallInt.to_string());
         expect!["LargeInt"].assert_eq(&TLargeInt.to_string());
         expect!["Int"].assert_eq(&TInt.to_string());
@@ -1673,7 +1670,6 @@ mod type_tests {
 
     #[test]
     fn test_display_union() {
-        use crate::hir_type::types::*;
         expect!["Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).to_string());
         expect!["CBool|Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).union(TCBool).to_string());
     }
