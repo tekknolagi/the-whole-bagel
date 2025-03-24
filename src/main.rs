@@ -1,3 +1,4 @@
+#![allow(non_upper_case_globals)]
 #![allow(dead_code)]
 use std::collections::HashMap;
 use bit_set::BitSet;
@@ -340,6 +341,48 @@ mod hir {
     type InsnSet = TypedBitSet<InsnId>;
     type BlockSet = TypedBitSet<BlockId>;
 
+    #[derive(Debug, Copy, Clone)]
+    struct Type {
+        bits: u64,
+    }
+
+    impl Type {
+        const fn from_bits(bits: u64) -> Self {
+            Self { bits }
+        }
+
+        const fn union(self, other: Self) -> Self {
+            Self { bits: self.bits | other.bits }
+        }
+
+        const fn intersection(self, other: Self) -> Self {
+            Self { bits: self.bits & other.bits }
+        }
+
+        const fn bit_equal(self, other: Self) -> bool {
+            self.bits == other.bits
+        }
+
+        const fn is_subtype(self, other: Self) -> bool {
+            (self.bits & other.bits) == other.bits
+        }
+    }
+
+    const TEmpty: Type = Type::from_bits(0);
+    const TSmallInt: Type = Type::from_bits(1 << 0);
+    const TLargeInt: Type = Type::from_bits(1 << 1);
+    const TInt: Type = TSmallInt.union(TLargeInt);
+    const TCBool: Type = Type::from_bits(1 << 2);
+    const TVoid: Type = Type::from_bits(1 << 3);
+    const TFloat: Type = Type::from_bits(1 << 4);
+    const TBool: Type = Type::from_bits(1 << 5);
+    const TStr: Type = Type::from_bits(1 << 6);
+    const TClass: Type = Type::from_bits(1 << 7);
+    const TFunction: Type = Type::from_bits(1 << 8);
+    const TNil: Type = Type::from_bits(1 << 9);
+    const TFrame: Type = Type::from_bits(1 << 10);
+    const TAny: Type = Type::from_bits(!0);
+
     #[derive(Debug)]
     struct Block {
         phis: Vec<InsnId>,
@@ -358,13 +401,14 @@ mod hir {
         entry: BlockId,
         params: Vec<InsnId>,
         insns: Vec<Insn>,
+        insn_types: Vec<Type>,
         blocks: Vec<Block>,
         num_locals: usize,
     }
 
     impl Function {
         fn new(name: NameId) -> Function {
-            Function { name, entry: BlockId(0), insns: vec![], params: vec![], blocks: vec![Block::new()], num_locals: 0 }
+            Function { name, entry: BlockId(0), insns: vec![], insn_types: vec![], params: vec![], blocks: vec![Block::new()], num_locals: 0 }
         }
 
         fn find(&self, insn: InsnId) -> InsnId {
@@ -392,6 +436,7 @@ mod hir {
         fn new_insn(&mut self, insn: Insn) -> InsnId {
             let result = InsnId(self.insns.len());
             self.insns.push(insn);
+            self.insn_types.push(TEmpty);
             result
         }
 
@@ -410,12 +455,13 @@ mod hir {
                 // TODO(max): Catch double terminators
                 self.blocks[block.0].insns.push(result);
             }
+            self.insn_types.push(TEmpty);
             result
         }
 
         fn is_terminated(&self, block: BlockId) -> bool {
             match self.blocks[block.0].insns.last().map(|insn| &self.insns[insn.0].opcode) {
-                Some(Opcode::Return | Opcode::CondBranch(..) | Opcode::Branch(..)) => true,
+                Some(op) => op.is_terminator(),
                 _ => false,
             }
         }
@@ -516,6 +562,61 @@ mod hir {
                     }
                 }
                 self.blocks[block_id.0].insns = new_insns;
+            }
+        }
+
+        fn type_of(&self, insn_id: InsnId) -> Type {
+            let insn_id = self.find(insn_id);
+            self.insn_types[insn_id.0]
+        }
+
+        fn is_a(&self, insn_id: InsnId, ty: Type) -> bool {
+            self.type_of(insn_id).is_subtype(ty)
+        }
+
+        fn infer_type(&self, insn_id: InsnId) -> Type {
+            let insn_id = self.find(insn_id);
+            let insn = &self.insns[insn_id.0];
+            match &insn.opcode {
+                Opcode::Identity => panic!("should not see Identity after calling find()"),
+                Opcode::Const(Value::Int(_)) => TInt,
+                Opcode::Const(Value::Float(_)) => TFloat,
+                Opcode::Const(Value::Bool(_)) => TBool,
+                Opcode::Const(Value::Str(_)) => TStr,
+                Opcode::Const(Value::ObjectClass) => TClass,
+                Opcode::Const(Value::Nil) => TNil,
+                Opcode::Abort => TVoid,
+                Opcode::Print => TVoid,
+                Opcode::Return | Opcode::Branch(_) | Opcode::CondBranch(_, _) => TVoid,
+                Opcode::Store(_) => TVoid,
+                Opcode::Add if self.is_a(insn.operands[0], TInt) && self.is_a(insn.operands[1], TInt) => TInt,
+                Opcode::Add if self.is_a(insn.operands[0], TFloat) && self.is_a(insn.operands[1], TFloat) => TFloat,
+                Opcode::Add if self.is_a(insn.operands[0], TStr) && self.is_a(insn.operands[1], TStr) => TStr,
+                Opcode::IsTruthy => TCBool,
+                Opcode::NewFrame => TFrame,
+                Opcode::NewClass(_) => TClass,
+                Opcode::GuardInt => TInt,
+                Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => TBool,
+                _ => TAny,
+            }
+        }
+
+        pub fn infer_types(&mut self) {
+            let mut changed = true;
+            let rpo = self.rpo();
+            while changed {
+                changed = false;
+                for block_id in &rpo {
+                    for insn_id in &self.blocks[block_id.0].insns {
+                        let insn_id = self.find(*insn_id);
+                        let old_type = self.insn_types[insn_id.0];
+                        let new_type = self.infer_type(insn_id);
+                        if !old_type.bit_equal(new_type) {
+                            self.insn_types[insn_id.0] = new_type;
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -695,20 +796,28 @@ mod hir {
                     if seen.contains(insn_id) { continue; }
                     seen.insert(insn_id);
                     let Insn { opcode, operands } = &fun.insns[insn_id.0];
+                    let ty = fun.type_of(insn_id);
+                    if ty.bit_equal(TEmpty) {
+                        write!(f, "    {insn_id} = ")?;
+                    } else if ty.bit_equal(TVoid) {
+                        write!(f, "    ")?;
+                    } else {
+                        write!(f, "    {insn_id}:{ty:x?} = ")?;
+                    }
                     match opcode {
                         Opcode::NewClass(ClassDef { name, superclass, .. }) => {
                             let class_name = self.program.interner.lookup(*name);
-                            write!(f, "    {insn_id} = NewClass({class_name}, {superclass})")
+                            write!(f, "NewClass({class_name}, {superclass})")
                         }
                         Opcode::LoadAttr(name) => {
                             let name = self.program.interner.lookup(*name);
-                            write!(f, "    {insn_id} = LoadAttr({name})")
+                            write!(f, "LoadAttr({name})")
                         }
                         Opcode::StoreAttr(name) => {
                             let name = self.program.interner.lookup(*name);
-                            write!(f, "    {insn_id} = StoreAttr({name})")
+                            write!(f, "StoreAttr({name})")
                         }
-                        _ => write!(f, "    {insn_id} = {:?}", opcode),
+                        _ => write!(f, "{:?}", opcode),
                     }?;
                     let mut sep = "";
                     for operand in operands {
@@ -774,6 +883,15 @@ mod hir {
         IsTruthy,
         This,
         Call,
+    }
+
+    impl Opcode {
+        fn is_terminator(&self) -> bool {
+            match self {
+                Opcode::Return | Opcode::Branch(..) | Opcode::CondBranch(..) => true,
+                _ => false,
+            }
+        }
     }
 
     type Operands = SmallVec::<[InsnId; 2]>;
@@ -904,10 +1022,12 @@ mod hir {
         }
 
         fn leave_fun(&mut self) {
-            if !self.prog.funs[self.fun().0].is_terminated(self.block()) {
+            let fun = self.fun();
+            if !self.prog.funs[fun.0].is_terminated(self.block()) {
                 let nil = self.push_op(Opcode::Const(Value::Nil));
                 self.push_insn(Opcode::Return, smallvec![nil]);
             }
+            self.prog.funs[fun.0].infer_types();
             if let Some(Context { .. }) = self.context_stack.pop() {
             } else {
                 panic!("Function stack underflow");
@@ -3000,6 +3120,7 @@ mod opt_tests {
         let mut actual = parser.prog;
         for fun in &mut actual.funs {
             fun.unbox_locals();
+            fun.infer_types();
             fun.eliminate_dead_code();
         }
         expect.assert_eq(format!("{actual}").as_str());
