@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 use std::collections::HashMap;
 use bit_set::BitSet;
+mod hir_type;
 
 macro_rules! define_id_type {
     ($prefix:expr, $name:ident) => {
@@ -341,88 +342,6 @@ mod hir {
     type InsnSet = TypedBitSet<InsnId>;
     type BlockSet = TypedBitSet<BlockId>;
 
-    #[derive(Debug, Copy, Clone)]
-    pub struct Type {
-        pub bits: u64,
-    }
-
-    impl Type {
-        const fn from_bits(bits: u64) -> Self {
-            Self { bits }
-        }
-
-        pub const fn union(self, other: Self) -> Self {
-            Self { bits: self.bits | other.bits }
-        }
-
-        pub const fn intersection(self, other: Self) -> Self {
-            Self { bits: self.bits & other.bits }
-        }
-
-        const fn bit_equal(self, other: Self) -> bool {
-            self.bits == other.bits
-        }
-
-        pub const fn is_subtype(self, other: Self) -> bool {
-            (self.bits & other.bits) == self.bits
-        }
-
-        pub fn to_string(self) -> String {
-            format!("{self}")
-        }
-    }
-
-    impl std::fmt::Display for Type {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-            let mut bits = self.bits;
-            let mut sep = "";
-            for (name, pattern) in ALL_TYPES {
-                if (bits & pattern.bits) == pattern.bits {
-                    write!(f, "{sep}{name}")?;
-                    bits &= !pattern.bits;
-                    if bits == 0 {
-                        return Ok(())
-                    }
-                    sep = "|";
-                }
-            }
-            unreachable!("Should have seen a matching bit pattern")
-        }
-    }
-
-    pub const TEmpty: Type = Type::from_bits(0);
-    pub const TSmallInt: Type = Type::from_bits(1 << 0);
-    pub const TLargeInt: Type = Type::from_bits(1 << 1);
-    pub const TInt: Type = TSmallInt.union(TLargeInt);
-    pub const TCBool: Type = Type::from_bits(1 << 2);
-    pub const TVoid: Type = Type::from_bits(1 << 3);
-    pub const TFloat: Type = Type::from_bits(1 << 4);
-    pub const TBool: Type = Type::from_bits(1 << 5);
-    pub const TStr: Type = Type::from_bits(1 << 6);
-    pub const TClass: Type = Type::from_bits(1 << 7);
-    pub const TFunction: Type = Type::from_bits(1 << 8);
-    pub const TNil: Type = Type::from_bits(1 << 9);
-    pub const TFrame: Type = Type::from_bits(1 << 10);
-    pub const TAny: Type = Type::from_bits(!0);
-
-    // TODO(max): Generate this automatically and sort by bit value
-    pub const ALL_TYPES: [(&'static str, Type); 14] = [
-        ("Any", TAny),
-        ("Frame", TFrame),
-        ("Nil", TNil),
-        ("Function", TFunction),
-        ("Class", TClass),
-        ("Str", TStr),
-        ("Bool", TBool),
-        ("Float", TFloat),
-        ("Void", TVoid),
-        ("CBool", TCBool),
-        ("Int", TInt),
-        ("LargeInt", TLargeInt),
-        ("SmallInt", TSmallInt),
-        ("Empty", TEmpty),
-    ];
-
     #[derive(Debug)]
     struct Block {
         phis: Vec<InsnId>,
@@ -434,6 +353,8 @@ mod hir {
             Block { phis: vec![], insns: vec![] }
         }
     }
+
+    use crate::hir_type::{Type, types};
 
     #[derive(Debug)]
     pub struct Function {
@@ -476,7 +397,7 @@ mod hir {
         fn new_insn(&mut self, insn: Insn) -> InsnId {
             let result = InsnId(self.insns.len());
             self.insns.push(insn);
-            self.insn_types.push(TEmpty);
+            self.insn_types.push(types::TEmpty);
             result
         }
 
@@ -495,7 +416,7 @@ mod hir {
                 // TODO(max): Catch double terminators
                 self.blocks[block.0].insns.push(result);
             }
-            self.insn_types.push(TEmpty);
+            self.insn_types.push(types::TEmpty);
             result
         }
 
@@ -619,25 +540,25 @@ mod hir {
             let insn = &self.insns[insn_id.0];
             match &insn.opcode {
                 Opcode::Identity => panic!("should not see Identity after calling find()"),
-                Opcode::Const(Value::Int(_)) => TInt,
-                Opcode::Const(Value::Float(_)) => TFloat,
-                Opcode::Const(Value::Bool(_)) => TBool,
-                Opcode::Const(Value::Str(_)) => TStr,
-                Opcode::Const(Value::ObjectClass) => TClass,
-                Opcode::Const(Value::Nil) => TNil,
-                Opcode::Abort => TVoid,
-                Opcode::Print => TVoid,
-                Opcode::Return | Opcode::Branch(_) | Opcode::CondBranch(_, _) => TVoid,
-                Opcode::Store(_) => TVoid,
-                Opcode::Add if self.is_a(insn.operands[0], TInt) && self.is_a(insn.operands[1], TInt) => TInt,
-                Opcode::Add if self.is_a(insn.operands[0], TFloat) && self.is_a(insn.operands[1], TFloat) => TFloat,
-                Opcode::Add if self.is_a(insn.operands[0], TStr) && self.is_a(insn.operands[1], TStr) => TStr,
-                Opcode::IsTruthy => TCBool,
-                Opcode::NewFrame => TFrame,
-                Opcode::NewClass(_) => TClass,
-                Opcode::GuardInt => TInt,
-                Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => TBool,
-                _ => TAny,
+                Opcode::Const(Value::Int(_)) => types::TInt,
+                Opcode::Const(Value::Float(_)) => types::TFloat,
+                Opcode::Const(Value::Bool(_)) => types::TBool,
+                Opcode::Const(Value::Str(_)) => types::TStr,
+                Opcode::Const(Value::ObjectClass) => types::TClass,
+                Opcode::Const(Value::Nil) => types::TNil,
+                Opcode::Abort => types::TVoid,
+                Opcode::Print => types::TVoid,
+                Opcode::Return | Opcode::Branch(_) | Opcode::CondBranch(_, _) => types::TVoid,
+                Opcode::Store(_) => types::TVoid,
+                Opcode::Add if self.is_a(insn.operands[0], types::TInt) && self.is_a(insn.operands[1], types::TInt) => types::TInt,
+                Opcode::Add if self.is_a(insn.operands[0], types::TFloat) && self.is_a(insn.operands[1], types::TFloat) => types::TFloat,
+                Opcode::Add if self.is_a(insn.operands[0], types::TStr) && self.is_a(insn.operands[1], types::TStr) => types::TStr,
+                Opcode::IsTruthy => types::TCBool,
+                Opcode::NewFrame => types::TFrame,
+                Opcode::NewClass(_) => types::TClass,
+                Opcode::GuardInt => types::TInt,
+                Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => types::TBool,
+                _ => types::TAny,
             }
         }
 
@@ -837,9 +758,9 @@ mod hir {
                     seen.insert(insn_id);
                     let Insn { opcode, operands } = &fun.insns[insn_id.0];
                     let ty = fun.type_of(insn_id);
-                    if ty.bit_equal(TEmpty) {
+                    if ty.bit_equal(types::TEmpty) {
                         write!(f, "    {insn_id} = ")?;
-                    } else if ty.bit_equal(TVoid) {
+                    } else if ty.bit_equal(types::TVoid) {
                         write!(f, "    ")?;
                     } else {
                         write!(f, "    {insn_id}:{ty} = ")?;
@@ -1714,11 +1635,18 @@ mod lexer_tests {
 
 #[cfg(test)]
 mod type_tests {
-    use super::hir::*;
     use expect_test::expect;
+    use crate::hir_type::ALL_TYPES;
+
+    #[test]
+    fn test_type_order() {
+        assert!(ALL_TYPES.windows(2).all(|w| w[0].1.bits >= w[1].1.bits),
+                "ALL_TYPES should be sorted in decreasing order by bit value");
+    }
 
     #[test]
     fn test_int() {
+        use crate::hir_type::types::*;
         assert!(TSmallInt.is_subtype(TInt));
         assert!(TLargeInt.is_subtype(TInt));
         assert!(TLargeInt.is_subtype(TAny));
@@ -1735,6 +1663,7 @@ mod type_tests {
 
     #[test]
     fn test_display_base() {
+        use crate::hir_type::types::*;
         expect!["SmallInt"].assert_eq(&TSmallInt.to_string());
         expect!["LargeInt"].assert_eq(&TLargeInt.to_string());
         expect!["Int"].assert_eq(&TInt.to_string());
@@ -1744,14 +1673,15 @@ mod type_tests {
 
     #[test]
     fn test_display_union() {
+        use crate::hir_type::types::*;
         expect!["Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).to_string());
-        expect!["Str|CBool|SmallInt"].assert_eq(&TSmallInt.union(TStr).union(TCBool).to_string());
+        expect!["CBool|Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).union(TCBool).to_string());
     }
 }
 
 #[cfg(test)]
 mod parser_tests {
-    use super::hir::{Lexer, Parser, ALL_TYPES};
+    use super::hir::{Lexer, Parser};
     use expect_test::{expect, Expect};
 
     fn check(source: &str, expect: Expect) {
@@ -1767,11 +1697,6 @@ mod parser_tests {
         let mut parser = Parser::from_lexer(&mut lexer);
         let result = parser.parse_program();
         expect.assert_eq(format!("{result:?}").as_str())
-    }
-
-    #[test]
-    fn test_type_order() {
-        assert!(ALL_TYPES.windows(2).all(|w| w[0].1.bits > w[1].1.bits), "ALL_TYPES should be sorted in decreasing order by bit value");
     }
 
     #[test]
