@@ -7,19 +7,43 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#define kSmallIntTagBits 1
+
+#define kWordSize 8
+
+#define kBitsPerByte 8
+
+#define kBitsPerPointer (kBitsPerByte * kWordSize)
+
+#define kBits (kBitsPerPointer - kSmallIntTagBits)
+
+#define kSmallIntTagMask ((1 << kSmallIntTagBits) - 1)
+
+#define kSmallIntMinValue -(1 << (kBits - 1))
+
+#define kSmallIntMaxValue ((1 << (kBits - 1)) - 1)
+
+#define kSmallIntTag 0
+
+typedef uintptr_t Object;
+
 typedef struct {
   uintptr_t data;
 } HeapObject;
-
-typedef uintptr_t Object;
 
 typedef struct {
   HeapObject obj;
   int64_t value;
 } IntObject;
 
+uintptr_t Object_raw(Object self);
+
 extern const HeapObject *twb_as_heap_object(Object obj);
 
 extern const IntObject *twb_as_int_object(Object obj);
 
 extern void twb_print(Object obj);
+
+bool twb_smallint_is_valid(intptr_t val);
+
+bool twb_is_smallint(Object obj);

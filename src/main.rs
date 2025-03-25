@@ -156,7 +156,7 @@ mod hir {
         Ident(IdentString),
         Print,
         Str(String),
-        Int(i64),
+        Int(isize),
         Bool(bool),
         Float(f64),
         Semicolon,
@@ -211,7 +211,7 @@ mod hir {
                     None => { return Err(LexError::Eof); }
                     Some(c) if c.is_whitespace() => { continue; }
                     Some(c) if c.is_alphabetic() || c == '_' => { return self.read_ident(c); }
-                    Some(c) if c.is_digit(NUMBER_BASE) => { return self.read_int(c.to_digit(NUMBER_BASE).unwrap() as i64); }
+                    Some(c) if c.is_digit(NUMBER_BASE) => { return self.read_int(c.to_digit(NUMBER_BASE).unwrap() as isize); }
                     Some('"') => { return self.read_string(); }
                     Some(';') => { return Ok(Token::Semicolon); }
                     Some('+') => { return Ok(Token::Plus); }
@@ -302,10 +302,10 @@ mod hir {
             Ok(Token::Str(result))
         }
 
-        fn read_int(&mut self, mut result: i64) -> Result<Token, LexError> {
+        fn read_int(&mut self, mut result: isize) -> Result<Token, LexError> {
             loop {
-                match self.chars.peek().and_then(|c| c.to_digit(NUMBER_BASE)).and_then(|d| Some(d as i64)) {
-                    Some(d) => result = result * (NUMBER_BASE as i64) + d,
+                match self.chars.peek().and_then(|c| c.to_digit(NUMBER_BASE)).and_then(|d| Some(d as isize)) {
+                    Some(d) => result = result * (NUMBER_BASE as isize) + d,
                     _ => break,
                 }
                 self.chars.next();
@@ -539,7 +539,8 @@ mod hir {
             let insn = &self.insns[insn_id.0];
             match &insn.opcode {
                 Opcode::Identity => panic!("should not see Identity after calling find()"),
-                Opcode::Const(Value::Int(_)) => TInt,
+                Opcode::Const(Value::Int(v)) if crate::runtime::twb_smallint_is_valid(*v) => TSmallInt,
+                Opcode::Const(Value::Int(_)) => TLargeInt,
                 Opcode::Const(Value::Float(_)) => TFloat,
                 Opcode::Const(Value::Bool(_)) => TBool,
                 Opcode::Const(Value::Str(_)) => TStr,
@@ -795,7 +796,7 @@ mod hir {
     #[derive(Debug, PartialEq, Clone)]
     enum Value {
         Nil,
-        Int(i64),
+        Int(isize),
         Float(f64),
         Bool(bool),
         Str(String),
@@ -1458,6 +1459,11 @@ mod runtime {
         ptr: usize,
     }
 
+    impl Object {
+        #[export_name = "Object_raw"]
+        pub extern "C" fn raw(self) -> usize { self.ptr }
+    }
+
     #[repr(C)]
     pub struct HeapObject {
         data: usize,
@@ -1469,10 +1475,30 @@ mod runtime {
         value: i64,
     }
 
+    pub const kSmallIntTagBits: usize = 1;
+    pub const kWordSize: usize = 8;
+    pub const kBitsPerByte: usize = 8;
+    pub const kBitsPerPointer: usize = kBitsPerByte * kWordSize;
+    pub const kBits: usize = kBitsPerPointer - kSmallIntTagBits;
+    pub const kSmallIntTagMask: usize = (1 << kSmallIntTagBits) - 1;
+    pub const kSmallIntMinValue: isize = -(1isize << (kBits - 1));
+    pub const kSmallIntMaxValue: isize = (1isize << (kBits - 1)) - 1;
+    pub const kSmallIntTag: usize = 0;         // 0b****0
+
     extern "C" {
         fn twb_as_heap_object(obj: Object) -> *const HeapObject;
         fn twb_as_int_object(obj: Object) -> *const IntObject;
         fn twb_print(obj: Object) -> std::ffi::c_void;
+    }
+
+    #[no_mangle]
+    pub extern "C" fn twb_smallint_is_valid(val: isize) -> bool {
+        kSmallIntMinValue <= val && val <= kSmallIntMaxValue
+    }
+
+    #[no_mangle]
+    pub extern "C" fn twb_is_smallint(obj: Object) -> bool {
+        (obj.raw() & kSmallIntTagMask) == kSmallIntTag
     }
 }
 
@@ -1707,7 +1733,7 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 v2:Nil = Const(Nil)
                 Return v2
               }
@@ -1722,8 +1748,8 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
-                v2:Int = Const(Int(2))
+                v1:SmallInt = Const(Int(1))
+                v2:SmallInt = Const(Int(2))
                 v3:Any = Equal v1, v2
                 v4:Nil = Const(Nil)
                 Return v4
@@ -1739,8 +1765,8 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
-                v2:Int = Const(Int(2))
+                v1:SmallInt = Const(Int(1))
+                v2:SmallInt = Const(Int(2))
                 v3:Any = NotEqual v1, v2
                 v4:Nil = Const(Nil)
                 Return v4
@@ -1758,12 +1784,12 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
-                v2:Int = Const(Int(2))
+                v1:SmallInt = Const(Int(1))
+                v2:SmallInt = Const(Int(2))
                 v3:Int = GuardInt v1
                 v4:Int = GuardInt v2
                 v5:Any = Mul v3, v4
-                v6:Int = Const(Int(3))
+                v6:SmallInt = Const(Int(3))
                 v7:Int = GuardInt v5
                 v8:Int = GuardInt v6
                 v9:Int = Add v7, v8
@@ -1781,9 +1807,9 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
-                v2:Int = Const(Int(2))
-                v3:Int = Const(Int(3))
+                v1:SmallInt = Const(Int(1))
+                v2:SmallInt = Const(Int(2))
+                v3:SmallInt = Const(Int(3))
                 v4:Int = GuardInt v2
                 v5:Int = GuardInt v3
                 v6:Any = Mul v4, v5
@@ -1804,8 +1830,8 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
-                v2:Int = Const(Int(2))
+                v1:SmallInt = Const(Int(1))
+                v2:SmallInt = Const(Int(2))
                 v3:Int = GuardInt v1
                 v4:Int = GuardInt v2
                 v5:Int = Add v3, v4
@@ -1823,12 +1849,12 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 v2:CBool = IsTruthy v1
                 CondBranch(bb1, bb2) v2
               }
               bb2 {
-                v4:Int = Const(Int(2))
+                v4:SmallInt = Const(Int(2))
                 Branch(bb1)
               }
               bb1 {
@@ -1848,12 +1874,12 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 v2:CBool = IsTruthy v1
                 CondBranch(bb1, bb2) v2
               }
               bb2 {
-                v4:Int = Const(Int(2))
+                v4:SmallInt = Const(Int(2))
                 Branch(bb1)
               }
               bb1 {
@@ -1862,7 +1888,7 @@ mod parser_tests {
                 CondBranch(bb3, bb4) v7
               }
               bb4 {
-                v9:Int = Const(Int(3))
+                v9:SmallInt = Const(Int(3))
                 Branch(bb3)
               }
               bb3 {
@@ -1884,8 +1910,8 @@ mod parser_tests {
     fn0: fun <toplevel>() (entry bb0) {
       bb0 {
         v0:Frame = NewFrame
-        v1:Int = Const(Int(1))
-        v2:Int = Const(Int(2))
+        v1:SmallInt = Const(Int(1))
+        v2:SmallInt = Const(Int(2))
         v3:Int = GuardInt v1
         v4:Int = GuardInt v2
         v5:Int = Add v3, v4
@@ -1903,8 +1929,8 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
-                v2:Int = Const(Int(2))
+                v1:SmallInt = Const(Int(1))
+                v2:SmallInt = Const(Int(2))
                 v3:Int = GuardInt v1
                 v4:Int = GuardInt v2
                 v5:Int = Add v3, v4
@@ -1938,7 +1964,7 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
                 Print v3
@@ -1957,7 +1983,7 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -1986,9 +2012,9 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@0) v0, v3
                 v5:Any = Load(@0) v0
                 v6:Any = Load(@0) v0
@@ -2015,11 +2041,11 @@ print c;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@1) v0, v3
-                v5:Int = Const(Int(3))
+                v5:SmallInt = Const(Int(3))
                 Store(@2) v0, v5
                 v7:Any = Load(@2) v0
                 Store(@1) v0, v7
@@ -2050,9 +2076,9 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@1) v0, v3
                 v5:Any = Load(@1) v0
                 Print v5
@@ -2094,20 +2120,20 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 v4:CBool = IsTruthy v3
                 CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v9:Int = Const(Int(4))
+                v9:SmallInt = Const(Int(4))
                 Store(@0) v0, v9
                 v11:Any = Load(@0) v0
                 Branch(bb3)
               }
               bb1 {
-                v6:Int = Const(Int(3))
+                v6:SmallInt = Const(Int(3))
                 Store(@0) v0, v6
                 v8:Any = Load(@0) v0
                 Branch(bb3)
@@ -2168,7 +2194,7 @@ print a;
                 Return v8
               }
               bb2 {
-                v5:Int = Const(Int(1))
+                v5:SmallInt = Const(Int(1))
                 Print v5
                 Branch(bb1)
               }
@@ -2186,13 +2212,13 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
                 Branch(bb1)
               }
               bb1 {
                 v4:Any = Load(@0) v0
-                v5:Int = Const(Int(10))
+                v5:SmallInt = Const(Int(10))
                 v6:Int = GuardInt v4
                 v7:Int = GuardInt v5
                 v8:Bool = Less v6, v7
@@ -2222,13 +2248,13 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
                 Branch(bb1)
               }
               bb1 {
                 v4:Any = Load(@0) v0
-                v5:Int = Const(Int(10))
+                v5:SmallInt = Const(Int(10))
                 v6:Int = GuardInt v4
                 v7:Int = GuardInt v5
                 v8:Bool = Less v6, v7
@@ -2243,7 +2269,7 @@ print a;
                 v11:Any = Load(@0) v0
                 Print v11
                 v13:Any = Load(@0) v0
-                v14:Int = Const(Int(1))
+                v14:SmallInt = Const(Int(1))
                 v15:Int = GuardInt v13
                 v16:Int = GuardInt v14
                 v17:Int = Add v15, v16
@@ -2294,9 +2320,9 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@1) v0, v3
                 v5:Any = Load(@0) v0
                 Print v5
@@ -2372,7 +2398,7 @@ print a;
                 v0:Frame = NewFrame
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
-                v4:Int = Const(Int(1))
+                v4:SmallInt = Const(Int(1))
                 v5:Int = GuardInt v3
                 v6:Int = GuardInt v4
                 v7:Int = Add v5, v6
@@ -2487,7 +2513,7 @@ print a;
                 v1:Any = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
-                v4:Int = Const(Int(1))
+                v4:SmallInt = Const(Int(1))
                 v5:Any = Call v3, v4
                 v6:Nil = Const(Nil)
                 Return v6
@@ -2516,9 +2542,9 @@ print a;
                 v1:Any = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
-                v4:Int = Const(Int(1))
-                v5:Int = Const(Int(2))
-                v6:Int = Const(Int(3))
+                v4:SmallInt = Const(Int(1))
+                v5:SmallInt = Const(Int(2))
+                v6:SmallInt = Const(Int(3))
                 v7:Any = Call v3, v4, v5, v6
                 v8:Nil = Const(Nil)
                 Return v8
@@ -2546,10 +2572,10 @@ print a;
                 v0:Frame = NewFrame
                 v1:Any = NewClosure(fn1)
                 Store(@0) v0, v1
-                v3:Int = Const(Int(1))
+                v3:SmallInt = Const(Int(1))
                 v4:Any = Load(@0) v0
                 v5:Any = Call v4
-                v6:Int = Const(Int(2))
+                v6:SmallInt = Const(Int(2))
                 v7:Int = GuardInt v5
                 v8:Int = GuardInt v6
                 v9:Int = Add v7, v8
@@ -2582,10 +2608,10 @@ print a;
                 v0:Frame = NewFrame
                 v1:Any = NewClosure(fn1)
                 Store(@0) v0, v1
-                v3:Int = Const(Int(1))
+                v3:SmallInt = Const(Int(1))
                 v4:Any = Load(@0) v0
                 v5:Any = Call v4
-                v6:Int = Const(Int(2))
+                v6:SmallInt = Const(Int(2))
                 v7:Int = GuardInt v5
                 v8:Int = GuardInt v6
                 v9:Any = Mul v7, v8
@@ -2619,9 +2645,9 @@ print a;
                 v1:Any = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
-                v4:Int = Const(Int(1))
+                v4:SmallInt = Const(Int(1))
                 v5:Any = Call v3, v4
-                v6:Int = Const(Int(2))
+                v6:SmallInt = Const(Int(2))
                 v7:Any = Call v5, v6
                 v8:Nil = Const(Nil)
                 Return v8
@@ -2731,7 +2757,7 @@ print a;
                 v0:Frame = NewFrame
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
-                v4:Int = Const(Int(1))
+                v4:SmallInt = Const(Int(1))
                 v5:Any = GuardInstance v3
                 v6:Any = StoreAttr(b) v5, v4
                 v7:Nil = Const(Nil)
@@ -2761,7 +2787,7 @@ print a;
                 v3:Any = Load(@0) v0
                 v4:Any = GuardInstance v3
                 v5:Any = LoadAttr(b) v4
-                v6:Int = Const(Int(1))
+                v6:SmallInt = Const(Int(1))
                 v7:Any = GuardInstance v5
                 v8:Any = StoreAttr(c) v7, v6
                 v9:Nil = Const(Nil)
@@ -2809,7 +2835,7 @@ print a;
                     v1:Any = NewClosure(fn1)
                     Store(@0) v0, v1
                     v3:Any = Load(@0) v0
-                    v4:Int = Const(Int(1))
+                    v4:SmallInt = Const(Int(1))
                     v5:Any = GuardInstance v3
                     v6:Any = StoreAttr(a) v5, v4
                     v7:Nil = Const(Nil)
@@ -3055,8 +3081,8 @@ print a;
                     v2:Class = NewClass(C, v1)
                     Store(@0) v0, v2
                     v4:Any = Load(@0) v0
-                    v5:Int = Const(Int(1))
-                    v6:Int = Const(Int(2))
+                    v5:SmallInt = Const(Int(1))
+                    v6:SmallInt = Const(Int(2))
                     v7:Any = Call v4, v5, v6
                     v8:Nil = Const(Nil)
                     Return v8
@@ -3153,7 +3179,7 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
                 Print v1
                 v5:Nil = Const(Nil)
@@ -3175,11 +3201,11 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@0) v0, v3
-                v6:Int = Const(Int(3))
+                v6:SmallInt = Const(Int(3))
                 Store(@0) v0, v6
                 Print v6
                 v11:Nil = Const(Nil)
@@ -3200,7 +3226,7 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
                 Store(@0) v0, v1
                 Print v1
@@ -3223,9 +3249,9 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@1) v0, v3
                 Store(@0) v0, v3
                 Print v3
@@ -3251,11 +3277,11 @@ print c;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@1) v0, v3
-                v5:Int = Const(Int(3))
+                v5:SmallInt = Const(Int(3))
                 Store(@2) v0, v5
                 Store(@1) v0, v5
                 Store(@0) v0, v5
@@ -3280,9 +3306,9 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 Store(@1) v0, v3
                 Print v3
                 v7:Nil = Const(Nil)
@@ -3307,19 +3333,19 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
-                v3:Int = Const(Int(2))
+                v3:SmallInt = Const(Int(2))
                 v4:CBool = IsTruthy v3
                 CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v9:Int = Const(Int(4))
+                v9:SmallInt = Const(Int(4))
                 Store(@0) v0, v9
                 Branch(bb3)
               }
               bb1 {
-                v6:Int = Const(Int(3))
+                v6:SmallInt = Const(Int(3))
                 Store(@0) v0, v6
                 Branch(bb3)
               }
@@ -3343,13 +3369,13 @@ print a;",
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Int = Const(Int(1))
+                v1:SmallInt = Const(Int(1))
                 Store(@0) v0, v1
                 Branch(bb1)
               }
               bb1 {
                 v23:Any = Phi v1, v17
-                v5:Int = Const(Int(10))
+                v5:SmallInt = Const(Int(10))
                 v6:Int = GuardInt v23
                 v7:Int = GuardInt v5
                 v8:Bool = Less v6, v7
@@ -3362,7 +3388,7 @@ print a;",
               }
               bb2 {
                 Print v23
-                v14:Int = Const(Int(1))
+                v14:SmallInt = Const(Int(1))
                 v15:Int = GuardInt v23
                 v16:Int = GuardInt v14
                 v17:Int = Add v15, v16

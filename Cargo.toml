@@ -13,3 +13,7 @@ features = ["union"]
 
 [dev-dependencies]
 expect-test = "1.5"
+
+[lib]
+crate-type=["rlib", "cdylib"]
+path="src/main.rs"
