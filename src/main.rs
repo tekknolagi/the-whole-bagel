@@ -755,14 +755,11 @@ mod hir {
                 sep = ", ";
             }
             writeln!(f, ") (entry {fun_entry}) {{")?;
-            let mut seen = InsnSet::new();
             for block_id in fun.rpo() {
                 writeln!(f, "  {block_id} {{")?;
                 let block = &fun.blocks[block_id.0];
                 for insn_id in block.phis.iter().chain(&block.insns) {
-                    let insn_id = fun.find(*insn_id);
-                    if seen.contains(insn_id) { continue; }
-                    seen.insert(insn_id);
+                    let insn_id = *insn_id;
                     let Insn { opcode, operands } = &fun.insns[insn_id.0];
                     let ty = fun.type_of(insn_id);
                     if ty.bit_equal(TEmpty) {
