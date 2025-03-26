@@ -680,10 +680,9 @@ mod hir {
                     }
                 }
             }
-            let mut mark = vec![false; self.insns.len()];
+            let mut mark = InsnSet::new();
             while let Some(insn) = worklist.pop_front() {
-                if mark[insn.0] { continue; }
-                mark[insn.0] = true;
+                if !mark.insert(insn) { continue; }
                 let insn_id = self.find(insn);
                 for operand in &self.insns[insn_id.0].operands {
                     let operand = self.find(*operand);
@@ -696,7 +695,7 @@ mod hir {
                 let mut new_phis = vec![];
                 for insn_id in old_phis {
                     let insn_id = self.find(*insn_id);
-                    if mark[insn_id.0] && seen.insert(insn_id) {
+                    if mark.contains(insn_id) && seen.insert(insn_id) {
                         new_phis.push(insn_id);
                     }
                 }
@@ -706,7 +705,7 @@ mod hir {
                 let mut new_insns = vec![];
                 for insn_id in old_insns {
                     let insn_id = self.find(*insn_id);
-                    if mark[insn_id.0] && seen.insert(insn_id) {
+                    if mark.contains(insn_id) && seen.insert(insn_id) {
                         new_insns.push(insn_id);
                     }
                 }
