@@ -739,7 +739,7 @@ mod hir {
     impl<'a> std::fmt::Display for FunctionPrinter<'a> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
             let fun = self.function;
-            let fun_name = self.program.interner.lookup(fun.name);
+            let fun_name = self.program.name(fun.name);
             let fun_entry = fun.entry;
             write!(f, "fun {fun_name}(")?;
             let mut sep = "";
@@ -767,15 +767,15 @@ mod hir {
                     }
                     match opcode {
                         Opcode::NewClass(ClassDef { name, superclass, .. }) => {
-                            let class_name = self.program.interner.lookup(*name);
+                            let class_name = self.program.name(*name);
                             write!(f, "NewClass({class_name}, {superclass})")
                         }
                         Opcode::LoadAttr(name) => {
-                            let name = self.program.interner.lookup(*name);
+                            let name = self.program.name(*name);
                             write!(f, "LoadAttr({name})")
                         }
                         Opcode::StoreAttr(name) => {
-                            let name = self.program.interner.lookup(*name);
+                            let name = self.program.name(*name);
                             write!(f, "StoreAttr({name})")
                         }
                         _ => write!(f, "{:?}", opcode),
@@ -888,6 +888,10 @@ mod hir {
 
         fn intern(&mut self, name: &str) -> NameId {
             self.interner.intern(name)
+        }
+
+        pub fn name(&self, name: NameId) -> &'static str {
+            self.interner.lookup(name)
         }
 
         fn push_fun(&mut self, name: NameId) -> FunId {
@@ -1058,7 +1062,7 @@ mod hir {
                     self.tokens.next();
                     let superclass_name = self.expect_ident()?;
                     if name == superclass_name {
-                        return Err(ParseError::CannotInheritSelf(self.prog.interner.lookup(name)));
+                        return Err(ParseError::CannotInheritSelf(self.prog.name(name)));
                     }
                     let value = self.load_local(env, superclass_name)?;
                     self.push_insn(Opcode::GuardClass, smallvec![value])
@@ -1296,7 +1300,7 @@ mod hir {
         fn load_local(&mut self, env: &Env, name: NameId) -> Result<InsnId, ParseError> {
             match env.lookup(name) {
                 Some(slot) => Ok(self.read_local(slot)),
-                None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
+                None => return Err(ParseError::UnboundName(self.prog.name(name))),
             }
         }
 
@@ -1311,7 +1315,7 @@ mod hir {
             }
             match env.lookup(name) {
                 Some(slot) => { self.write_local(slot, value); Ok(value) }
-                None => return Err(ParseError::UnboundName(self.prog.interner.lookup(name))),
+                None => return Err(ParseError::UnboundName(self.prog.name(name))),
             }
         }
 
