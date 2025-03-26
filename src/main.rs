@@ -96,7 +96,7 @@ struct TypedBitSet<T> {
     phantom: std::marker::PhantomData<T>,
 }
 
-impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T> {
+impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T>, T: Copy {
     pub fn new() -> Self {
         Self { set: BitSet::new(), phantom: Default::default() }
     }
@@ -108,6 +108,14 @@ impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T> {
     pub fn one(item: T) -> Self {
         let mut set = BitSet::new();
         set.insert(item.into());
+        Self { set, phantom: Default::default() }
+    }
+
+    pub fn from_slice(vec: &[T]) -> Self {
+        let mut set = BitSet::new();
+        for item in vec {
+            set.insert((*item).into());
+        }
         Self { set, phantom: Default::default() }
     }
 
@@ -357,7 +365,7 @@ mod hir {
 
     #[derive(Debug)]
     pub struct Function {
-        name: NameId,
+        pub name: NameId,
         entry: BlockId,
         params: Vec<InsnId>,
         insns: Vec<Insn>,
@@ -452,6 +460,44 @@ mod hir {
             result.push(block);
         }
 
+        pub fn check(&self) -> Result<(), Box<dyn std::error::Error>> {
+            // TODO(max): Check that Phi blocks reference in-edges that are from predecessors
+            // (right now we don't even associate Phi with edges or blocks at all)
+            let rpo = self.rpo();
+            let mut seen = InsnSet::new();
+            for block_id in &rpo {
+                // Check that no blocks have >1 edge from the same predecessor
+                let succs = self.succs(*block_id);
+                let unique_succs = BlockSet::from_slice(&succs);
+                if succs.len() != unique_succs.len() {
+                    return Err(format!("Block {block_id} has multiple edges to the same successor").into());
+                }
+                // Check that every block is terminated
+                let insns = &self.blocks[block_id.0].insns;
+                if insns.is_empty() {
+                    return Err(format!("Block {block_id} is empty").into());
+                }
+                if !self.is_terminated(*block_id) {
+                    let last_id = self.find(*insns.last().unwrap());
+                    let last = &self.insns[last_id.0];
+                    return Err(format!("Block {block_id} is unterminated (last instr is {last:?})").into());
+                }
+                // Check that there are no terminators in the middle of the block
+                for insn_id in insns.split_last().unwrap().1 {
+                    if self.insns[self.find(*insn_id).0].opcode.is_terminator() {
+                        return Err(format!("Block {block_id} has instructions after a terminator").into());
+                    }
+                }
+                // TODO(max): Check all operands are dominated by definitions
+                for insn_id in insns {
+                    if !seen.insert(*insn_id) {
+                        return Err(format!("Instruction {insn_id} is duplicated").into());
+                    }
+                }
+            }
+            Ok(())
+        }
+
         pub fn unbox_locals(&mut self) {
             // TODO(max): Whole-heap modeling with escapes
             // TODO(max): Take into account aliasing
@@ -493,35 +539,32 @@ mod hir {
             }
             for block_id in &rpo {
                 let mut env: Vec<_> = std::mem::take(&mut block_entry[block_id.0]);
-                let insns = std::mem::take(&mut self.blocks[block_id.0].insns);
-                let mut new_insns = vec![];
+                let insns = self.blocks[block_id.0].insns.clone();
                 for insn_id in insns {
                     let Insn { opcode, operands } = &self.insns[insn_id.0];
                     match opcode {
                         Opcode::Store(slot) => {
                             env[slot.0] = InsnSet::one(operands[1]);
-                            new_insns.push(insn_id);
                         }
                         Opcode::Load(slot) => {
                             let operands = &env[slot.0];
                             match operands.len() {
                                 0 => panic!("Should have at least one value"),
                                 1 => {
-                                    let replacement = operands.get_single();
+                                    let replacement = self.find(operands.get_single());
+                                    self.insn_types[replacement.0] = self.infer_type(replacement);
                                     self.make_equal_to(insn_id, replacement);
-                                    new_insns.push(replacement);
                                 }
                                 _ => {
                                     let phi = self.push_insn(*block_id, Opcode::Phi, operands.as_vec().into());
+                                    self.insn_types[phi.0] = self.infer_type(phi);
                                     self.make_equal_to(insn_id, phi);
-                                    new_insns.push(phi);
                                 }
                             }
                         }
-                        _ => new_insns.push(insn_id),
+                        _ => {}
                     }
                 }
-                self.blocks[block_id.0].insns = new_insns;
             }
         }
 
@@ -647,16 +690,27 @@ mod hir {
                     worklist.push_back(operand);
                 }
             }
+            let mut seen = InsnSet::new();
             for block_id in &rpo {
-                let old_block = &self.blocks[block_id.0].insns;
-                let mut new_block = vec![];
-                for insn_id in old_block {
+                let old_phis = &self.blocks[block_id.0].phis;
+                let mut new_phis = vec![];
+                for insn_id in old_phis {
                     let insn_id = self.find(*insn_id);
-                    if mark[insn_id.0] {
-                        new_block.push(insn_id);
+                    if mark[insn_id.0] && seen.insert(insn_id) {
+                        new_phis.push(insn_id);
                     }
                 }
-                self.blocks[block_id.0].insns = new_block;
+                self.blocks[block_id.0].phis = new_phis;
+
+                let old_insns = &self.blocks[block_id.0].insns;
+                let mut new_insns = vec![];
+                for insn_id in old_insns {
+                    let insn_id = self.find(*insn_id);
+                    if mark[insn_id.0] && seen.insert(insn_id) {
+                        new_insns.push(insn_id);
+                    }
+                }
+                self.blocks[block_id.0].insns = new_insns;
             }
         }
     }
@@ -960,8 +1014,9 @@ mod hir {
         context_stack: Vec<Context>,
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug)]
     pub enum ParseError {
+        FunctionStackUnderflow,
         UnexpectedToken(Token),
         UnexpectedEof,
         UnboundName(&'static str),
@@ -969,6 +1024,7 @@ mod hir {
         CannotAssignTo(LValue),
         CannotAssignToThis,
         CannotInheritSelf(&'static str),
+        InvalidIr(&'static str, Box<dyn std::error::Error>),
     }
 
     #[derive(Debug, PartialEq)]
@@ -990,17 +1046,18 @@ mod hir {
             self.enter_block(block);
         }
 
-        fn leave_fun(&mut self) {
+        fn leave_fun(&mut self) -> Result<(), ParseError> {
             let fun = self.fun();
             if !self.prog.funs[fun.0].is_terminated(self.block()) {
                 let nil = self.push_op(Opcode::Const(Value::Nil));
                 self.push_insn(Opcode::Return, smallvec![nil]);
             }
             self.prog.funs[fun.0].infer_types();
-            if let Some(Context { .. }) = self.context_stack.pop() {
-            } else {
-                panic!("Function stack underflow");
-            }
+            let name = self.prog.funs[fun.0].name;
+            let prog = &self.prog;
+            self.prog.funs[fun.0].check().or_else(|e| Err(ParseError::InvalidIr(prog.name(name), e)))?;
+            self.context_stack.pop().ok_or(ParseError::FunctionStackUnderflow)?;
+            Ok(())
         }
 
         fn fun(&self) -> FunId {
@@ -1054,7 +1111,7 @@ mod hir {
             while let Some(_) = self.tokens.peek() {
                 self.parse_toplevel(&mut env)?;
             }
-            self.leave_fun();
+            self.leave_fun()?;
             Ok(())
         }
 
@@ -1125,7 +1182,7 @@ mod hir {
                 self.parse_statement(&mut func_env)?;
             }
             self.expect(Token::RCurly)?;
-            self.leave_fun();
+            self.leave_fun()?;
             Ok(fun)
         }
 
@@ -1273,7 +1330,7 @@ mod hir {
                 self.parse_statement(&mut func_env)?;
             }
             self.expect(Token::RCurly)?;
-            self.leave_fun();
+            self.leave_fun()?;
             let closure = self.push_op(Opcode::NewClosure(fun));
             self.define_local(env, name, closure);
             Ok(())
@@ -1717,7 +1774,9 @@ mod parser_tests {
     fn check(source: &str, expect: Expect) {
         let mut lexer = Lexer::from_str(source);
         let mut parser = Parser::from_lexer(&mut lexer);
-        parser.parse_program().unwrap();
+        if let Err(e) = parser.parse_program() {
+            panic!("{:?}", e);
+        }
         let actual = parser.prog;
         expect.assert_eq(format!("{actual}").as_str());
     }
@@ -3147,18 +3206,25 @@ print a;
 
 #[cfg(test)]
 mod opt_tests {
-    use super::hir::{Lexer, Parser};
+    use super::hir::{Lexer, Parser, ParseError};
     use expect_test::{expect, Expect};
 
     fn check(source: &str, expect: Expect) {
         let mut lexer = Lexer::from_str(source);
         let mut parser = Parser::from_lexer(&mut lexer);
-        parser.parse_program().unwrap();
+        if let Err(e) = parser.parse_program() {
+            panic!("{:?}", e);
+        }
         let mut actual = parser.prog;
-        for fun in &mut actual.funs {
+        for fun_idx in 0..actual.funs.len() {
+            let name = actual.name(actual.funs[fun_idx].name);
+            let fun = &mut actual.funs[fun_idx];
             fun.unbox_locals();
+            fun.check().or_else(|e| Err(ParseError::InvalidIr(name, e))).unwrap();
             fun.infer_types();
+            fun.check().or_else(|e| Err(ParseError::InvalidIr(name, e))).unwrap();
             fun.eliminate_dead_code();
+            fun.check().or_else(|e| Err(ParseError::InvalidIr(name, e))).unwrap();
         }
         expect.assert_eq(format!("{actual}").as_str());
     }
