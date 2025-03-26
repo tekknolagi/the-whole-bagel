@@ -554,11 +554,13 @@ mod hir {
                                     let replacement = self.find(operands.get_single());
                                     self.insn_types[replacement.0] = self.infer_type(replacement);
                                     self.make_equal_to(insn_id, replacement);
+                                    // TODO(max): Modify env to reflect the new value?
                                 }
                                 _ => {
                                     let phi = self.push_insn(*block_id, Opcode::Phi, operands.as_vec().into());
                                     self.insn_types[phi.0] = self.infer_type(phi);
                                     self.make_equal_to(insn_id, phi);
+                                    // TODO(max): Modify env to reflect the new value?
                                 }
                             }
                         }
