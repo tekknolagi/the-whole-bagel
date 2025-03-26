@@ -558,6 +558,13 @@ mod hir {
                 Opcode::NewClass(_) => TClass,
                 Opcode::GuardInt => TInt,
                 Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => TBool,
+                Opcode::Phi => {
+                    let mut ty = TEmpty;
+                    for operand in &insn.operands {
+                        ty = ty.union(self.type_of(*operand));
+                    }
+                    ty
+                }
                 _ => TAny,
             }
         }
@@ -3354,7 +3361,7 @@ print a;",
                 Branch(bb3)
               }
               bb3 {
-                v18:Any = Phi v6, v9
+                v18:SmallInt = Phi v6, v9
                 Print v18
                 v16:Nil = Const(Nil)
                 Return v16
@@ -3378,7 +3385,7 @@ print a;",
                 Branch(bb1)
               }
               bb1 {
-                v23:Any = Phi v1, v17
+                v23:Int = Phi v1, v17
                 v5:SmallInt = Const(Int(10))
                 v6:Int = GuardInt v23
                 v7:Int = GuardInt v5
