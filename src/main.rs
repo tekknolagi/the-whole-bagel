@@ -29,6 +29,7 @@ macro_rules! define_id_type {
 define_id_type!(":", NameId);
 
 // ===== Begin matklad string interning =====
+// See license for string interning snippet in LICENSE-interning
 
 #[derive(Default)]
 pub struct Interner {
