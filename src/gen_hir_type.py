@@ -61,7 +61,7 @@ all_unions = []
 def add_union(name, types):
     all_unions.append(Type(name, types))
 
-add_union("Immediate", [SmallInt, SmallStr, Bool])
+add_union("Immediate", [SmallInt, SmallStr, Bool, Nil])
 
 types_and_unions = Any.topo()+all_unions
 num_bits = 0

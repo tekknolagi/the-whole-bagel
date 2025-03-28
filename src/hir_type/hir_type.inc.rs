@@ -5,12 +5,12 @@ pub const TInt: Type = Type::from_bits(0x3);
 pub const TFloat: Type = Type::from_bits(0x4);
 pub const TBool: Type = Type::from_bits(0x8);
 pub const TSmallStr: Type = Type::from_bits(0x10);
-pub const TImmediate: Type = Type::from_bits(0x19);
 pub const TLargeStr: Type = Type::from_bits(0x20);
 pub const TStr: Type = Type::from_bits(0x30);
 pub const TClass: Type = Type::from_bits(0x40);
 pub const TFunction: Type = Type::from_bits(0x80);
 pub const TNil: Type = Type::from_bits(0x100);
+pub const TImmediate: Type = Type::from_bits(0x119);
 pub const TFrame: Type = Type::from_bits(0x200);
 pub const TObject: Type = Type::from_bits(0x3ff);
 pub const TCInt8: Type = Type::from_bits(0x400);
@@ -47,12 +47,12 @@ pub const ALL_TYPES: [(&'static str, Type); 30] = [
     ("CInt8", TCInt8),
     ("Object", TObject),
     ("Frame", TFrame),
+    ("Immediate", TImmediate),
     ("Nil", TNil),
     ("Function", TFunction),
     ("Class", TClass),
     ("Str", TStr),
     ("LargeStr", TLargeStr),
-    ("Immediate", TImmediate),
     ("SmallStr", TSmallStr),
     ("Bool", TBool),
     ("Float", TFloat),
