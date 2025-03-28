@@ -599,6 +599,7 @@ mod hir {
                 Opcode::Add if self.is_a(insn.operands[0], TInt) && self.is_a(insn.operands[1], TInt) => TInt,
                 Opcode::Add if self.is_a(insn.operands[0], TFloat) && self.is_a(insn.operands[1], TFloat) => TFloat,
                 Opcode::Add if self.is_a(insn.operands[0], TStr) && self.is_a(insn.operands[1], TStr) => TStr,
+                Opcode::Add => TObject,
                 Opcode::IsTruthy => TCBool,
                 Opcode::NewFrame => TFrame,
                 Opcode::NewClass(_) => TClass,
@@ -1508,8 +1509,8 @@ mod hir {
                     _ => panic!("Unexpected token {token:?}"),
                 };
                 let mut rhs = self.parse_(&mut env, next_prec)?;
-                if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Add|Opcode::Sub|Opcode::Mul|Opcode::Div) {
-                    // TODO(max): Don't guard; string+string is valid too
+                if matches!(opcode, Opcode::Greater|Opcode::GreaterEqual|Opcode::Less|Opcode::LessEqual|Opcode::Sub|Opcode::Mul|Opcode::Div) {
+                    // Don't guard addition; string+string is allowed
                     lhs_value = self.push_insn(Opcode::GuardInt, smallvec![lhs_value]);
                     rhs = self.push_insn(Opcode::GuardInt, smallvec![rhs]);
                 }
@@ -1847,6 +1848,33 @@ mod parser_tests {
     // TODO(max): Add tests for prefix not (!)
 
     #[test]
+    fn var_add() {
+        check("fun f(a, b) { return a + b; }", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel>() (entry bb0) {
+              bb0 {
+                v0:Frame = NewFrame
+                v1:Any = NewClosure(fn1)
+                Store(@0) v0, v1
+                v3:Nil = Const(Nil)
+                Return v3
+              }
+            }
+            fn1: fun f(v1, v3) (entry bb0) {
+              bb0 {
+                v0:Frame = NewFrame
+                Store(@0) v0, v1
+                Store(@1) v0, v3
+                v5:Any = Load(@0) v0
+                v6:Any = Load(@1) v0
+                v7:Object = Add v5, v6
+                Return v7
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn mul_add() {
         check("1*2+3;", expect![[r#"
             Entry: fn0
@@ -1859,11 +1887,9 @@ mod parser_tests {
                 v4:Int = GuardInt v2
                 v5:Any = Mul v3, v4
                 v6:SmallInt = Const(Int(3))
-                v7:Int = GuardInt v5
-                v8:Int = GuardInt v6
-                v9:Int = Add v7, v8
-                v10:Nil = Const(Nil)
-                Return v10
+                v7:Object = Add v5, v6
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
         "#]])
@@ -1882,11 +1908,9 @@ mod parser_tests {
                 v4:Int = GuardInt v2
                 v5:Int = GuardInt v3
                 v6:Any = Mul v4, v5
-                v7:Int = GuardInt v1
-                v8:Int = GuardInt v6
-                v9:Int = Add v7, v8
-                v10:Nil = Const(Nil)
-                Return v10
+                v7:Object = Add v1, v6
+                v8:Nil = Const(Nil)
+                Return v8
               }
             }
         "#]])
@@ -1901,11 +1925,9 @@ mod parser_tests {
                 v0:Frame = NewFrame
                 v1:SmallInt = Const(Int(1))
                 v2:SmallInt = Const(Int(2))
-                v3:Int = GuardInt v1
-                v4:Int = GuardInt v2
-                v5:Int = Add v3, v4
-                v6:Nil = Const(Nil)
-                Return v6
+                v3:Int = Add v1, v2
+                v4:Nil = Const(Nil)
+                Return v4
               }
             }
         "#]])
@@ -1981,11 +2003,9 @@ mod parser_tests {
         v0:Frame = NewFrame
         v1:SmallInt = Const(Int(1))
         v2:SmallInt = Const(Int(2))
-        v3:Int = GuardInt v1
-        v4:Int = GuardInt v2
-        v5:Int = Add v3, v4
-        v6:Nil = Const(Nil)
-        Return v6
+        v3:Int = Add v1, v2
+        v4:Nil = Const(Nil)
+        Return v4
       }
     }
 "#]])
@@ -2000,12 +2020,10 @@ mod parser_tests {
                 v0:Frame = NewFrame
                 v1:SmallInt = Const(Int(1))
                 v2:SmallInt = Const(Int(2))
-                v3:Int = GuardInt v1
-                v4:Int = GuardInt v2
-                v5:Int = Add v3, v4
-                Print v5
-                v7:Nil = Const(Nil)
-                Return v7
+                v3:Int = Add v1, v2
+                Print v3
+                v5:Nil = Const(Nil)
+                Return v5
               }
             }
         "#]])
@@ -2065,7 +2083,7 @@ print a;",
     fn test_assign_non_lvalue() {
         check_error("1 = 2;", expect!["Err(CannotAssignTo(Insn(v1)))"]);
         check_error("var a = 1; (a) = 2;", expect!["Err(CannotAssignTo(Insn(v3)))"]);
-        check_error("var a = 1; (a+a) = 2;", expect!["Err(CannotAssignTo(Insn(v7)))"]);
+        check_error("var a = 1; (a+a) = 2;", expect!["Err(CannotAssignTo(Insn(v5)))"]);
         check_error("class Foo { Foo() { this = 1; } }", expect!["Err(CannotAssignToThis)"]);
         check_error("undefined = 1;", expect![[r#"Err(UnboundName("undefined"))"#]]);
     }
@@ -2331,19 +2349,17 @@ print a;
                 CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v21:Nil = Const(Nil)
-                Return v21
+                v19:Nil = Const(Nil)
+                Return v19
               }
               bb2 {
                 v11:Any = Load(@0) v0
                 Print v11
                 v13:Any = Load(@0) v0
                 v14:SmallInt = Const(Int(1))
-                v15:Int = GuardInt v13
-                v16:Int = GuardInt v14
-                v17:Int = Add v15, v16
-                Store(@0) v0, v17
-                v19:Any = Load(@0) v0
+                v15:Object = Add v13, v14
+                Store(@0) v0, v15
+                v17:Any = Load(@0) v0
                 Branch(bb1)
               }
             }
@@ -2468,10 +2484,8 @@ print a;
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
                 v4:SmallInt = Const(Int(1))
-                v5:Int = GuardInt v3
-                v6:Int = GuardInt v4
-                v7:Int = Add v5, v6
-                Return v7
+                v5:Object = Add v3, v4
+                Return v5
               }
             }
         "#]])
@@ -2497,10 +2511,8 @@ print a;
                 Store(@1) v0, v3
                 v5:Any = Load(@0) v0
                 v6:Any = Load(@1) v0
-                v7:Int = GuardInt v5
-                v8:Int = GuardInt v6
-                v9:Int = Add v7, v8
-                Return v9
+                v7:Object = Add v5, v6
+                Return v7
               }
             }
         "#]])
@@ -2645,14 +2657,10 @@ print a;
                 v4:Any = Load(@0) v0
                 v5:Any = Call v4
                 v6:SmallInt = Const(Int(2))
-                v7:Int = GuardInt v5
-                v8:Int = GuardInt v6
-                v9:Int = Add v7, v8
-                v10:Int = GuardInt v3
-                v11:Int = GuardInt v9
-                v12:Int = Add v10, v11
-                v13:Nil = Const(Nil)
-                Return v13
+                v7:Object = Add v5, v6
+                v8:Object = Add v3, v7
+                v9:Nil = Const(Nil)
+                Return v9
               }
             }
             fn1: fun f() (entry bb0) {
@@ -3478,25 +3486,23 @@ print a;",
                 Branch(bb1)
               }
               bb1 {
-                v23:Int = Phi v1, v17
+                v21:Object = Phi v1, v15
                 v5:SmallInt = Const(Int(10))
-                v6:Int = GuardInt v23
+                v6:Int = GuardInt v21
                 v7:Int = GuardInt v5
                 v8:Bool = Less v6, v7
                 v9:CBool = IsTruthy v8
                 CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v21:Nil = Const(Nil)
-                Return v21
+                v19:Nil = Const(Nil)
+                Return v19
               }
               bb2 {
-                Print v23
+                Print v21
                 v14:SmallInt = Const(Int(1))
-                v15:Int = GuardInt v23
-                v16:Int = GuardInt v14
-                v17:Int = Add v15, v16
-                Store(@0) v0, v17
+                v15:Object = Add v21, v14
+                Store(@0) v0, v15
                 Branch(bb1)
               }
             }
