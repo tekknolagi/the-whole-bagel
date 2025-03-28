@@ -462,11 +462,9 @@ mod hir {
                     VisitAction::VisitSuccs(block) => {
                         if !visited.insert(block) { continue; }
                         stack.push(VisitAction::VisitSelf(block));
-                        let mut succs = self.succs(block);
                         // The reverse is not strictly necessary but it keeps visit order
                         // compatibility with the recursive version.
-                        succs.reverse();
-                        for succ in succs {
+                        for succ in self.succs(block).into_iter().rev() {
                             stack.push(VisitAction::VisitSuccs(succ));
                         }
                     }
