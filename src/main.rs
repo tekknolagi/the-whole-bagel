@@ -2970,6 +2970,34 @@ print a;
     }
 
     #[test]
+    fn test_assign_class() {
+        check("class C { }
+        class D { }
+        C = D;
+        print C;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel>() (entry bb0) {
+              bb0 {
+                v0:Frame = NewFrame
+                v1:Class = Const(ObjectClass)
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v4:Class = Const(ObjectClass)
+                v5:Class = NewClass(D, v4)
+                Store(@1) v0, v5
+                v7:Any = Load(@1) v0
+                Store(@0) v0, v7
+                v9:Any = Load(@0) v0
+                v10:Any = Load(@0) v0
+                Print v10
+                v12:Nil = Const(Nil)
+                Return v12
+              }
+            }
+        "#]])
+    }
+
+    #[test]
     fn test_class_with_empty_method() {
         check("class C {
             empty() { }
@@ -3473,6 +3501,29 @@ print a;",
               }
             }
         "#]]);
+    }
+
+    #[test]
+    fn test_assign_class() {
+        check("class C { }
+        class D { }
+        C = D;
+        print C;", expect![[r#"
+            Entry: fn0
+            fn0: fun <toplevel>() (entry bb0) {
+              bb0 {
+                v0:Frame = NewFrame
+                v2:Class = NewClass(C, v1)
+                Store(@0) v0, v2
+                v5:Class = NewClass(D, v4)
+                Store(@1) v0, v5
+                Store(@0) v0, v5
+                Print v5
+                v12:Nil = Const(Nil)
+                Return v12
+              }
+            }
+        "#]])
     }
 }
 
