@@ -445,20 +445,35 @@ mod hir {
         }
 
         fn rpo(&self) -> Vec<BlockId> {
-            let mut visited = BlockSet::new();
-            let mut result = vec![];
-            self.po_from(self.entry, &mut result, &mut visited);
-            result.reverse();
-            result
+            self.rpo_from(self.entry)
         }
 
-        fn po_from(&self, block: BlockId, result: &mut Vec<BlockId>, visited: &mut BlockSet) {
-            if visited.contains(block) { return; }
-            visited.insert(block);
-            for succ in self.succs(block) {
-                self.po_from(succ, result, visited);
+        fn rpo_from(&self, start: BlockId) -> Vec<BlockId> {
+            let mut result = vec![];
+            let mut visited = BlockSet::new();
+            enum VisitAction {
+                VisitSelf(BlockId),
+                VisitSuccs(BlockId),
             }
-            result.push(block);
+            let mut stack = vec![VisitAction::VisitSuccs(start)];
+            while let Some(action) = stack.pop() {
+                match action {
+                    VisitAction::VisitSelf(block) => result.push(block),
+                    VisitAction::VisitSuccs(block) => {
+                        if !visited.insert(block) { continue; }
+                        stack.push(VisitAction::VisitSelf(block));
+                        let mut succs = self.succs(block);
+                        // The reverse is not strictly necessary but it keeps visit order
+                        // compatibility with the recursive version.
+                        succs.reverse();
+                        for succ in succs {
+                            stack.push(VisitAction::VisitSuccs(succ));
+                        }
+                    }
+                }
+            }
+            result.reverse();
+            result
         }
 
         pub fn check(&self) -> Result<(), Box<dyn std::error::Error>> {
