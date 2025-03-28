@@ -48,3 +48,52 @@ impl std::fmt::Display for Type {
 }
 
 include!("hir_type.inc.rs");
+
+#[cfg(test)]
+mod type_tests {
+    use expect_test::expect;
+    use crate::hir_type::*;
+
+    #[test]
+    fn test_type_order() { assert!(ALL_TYPES.windows(2).all(|w| w[0].1.bits >= w[1].1.bits),
+                "ALL_TYPES should be sorted in decreasing order by bit value");
+    }
+
+    #[test]
+    fn test_int() {
+        assert!(TSmallInt.is_subtype(TInt));
+        assert!(TLargeInt.is_subtype(TInt));
+        assert!(TLargeInt.is_subtype(TAny));
+        assert!(TInt.is_subtype(TAny));
+        assert!(TEmpty.is_subtype(TAny));
+        assert!(TEmpty.is_subtype(TInt));
+
+        assert!(!TInt.is_subtype(TSmallInt));
+        assert!(!TInt.is_subtype(TLargeInt));
+        assert!(!TAny.is_subtype(TInt));
+        assert!(!TAny.is_subtype(TEmpty));
+        assert!(!TInt.is_subtype(TEmpty));
+    }
+
+    #[test]
+    fn test_union() {
+        assert!(TSmallInt.union(TLargeInt).bit_equal(TInt));
+    }
+
+    #[test]
+    fn test_display_base() {
+        expect!["SmallInt"].assert_eq(&TSmallInt.to_string());
+        expect!["LargeInt"].assert_eq(&TLargeInt.to_string());
+        expect!["Int"].assert_eq(&TInt.to_string());
+        expect!["Any"].assert_eq(&TAny.to_string());
+        expect!["Empty"].assert_eq(&TEmpty.to_string());
+    }
+
+    #[test]
+    fn test_display_union() {
+        expect!["Int"].assert_eq(&TSmallInt.union(TLargeInt).to_string());
+        expect!["Str"].assert_eq(&TSmallStr.union(TLargeStr).to_string());
+        expect!["Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).to_string());
+        expect!["CBool|Str|SmallInt"].assert_eq(&TSmallInt.union(TStr).union(TCBool).to_string());
+    }
+}
