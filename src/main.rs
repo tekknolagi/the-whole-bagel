@@ -1666,13 +1666,12 @@ mod lir {
     #[derive(Debug)]
     struct Block {
         label: Label,
-        params: Vec<Vreg>,
         insns: Vec<(Address, Insn)>,
     }
 
     impl Block {
         fn new(label: Label) -> Self {
-            Self { label, params: Default::default(), insns: Default::default() }
+            Self { label, insns: Default::default() }
         }
     }
 
@@ -1712,12 +1711,6 @@ mod lir {
             self.blocks[block.0].1.insns.push((addr, insn));
         }
 
-        fn push_block_param(&mut self, block: Label) -> Vreg {
-            let result = self.new_vreg();
-            self.blocks[block.0].1.params.push(result);
-            result
-        }
-
         fn live_in(&self, block: Label) -> Vec<Vreg> {
             vec![]
         }
@@ -1728,15 +1721,6 @@ mod lir {
             writeln!(f, "fn {{")?;
             for (address, block) in &self.blocks {
                 write!(f, "  {address}: label {}", block.label)?;
-                if !block.params.is_empty() {
-                    write!(f, "(")?;
-                    let mut sep = "";
-                    for param in &block.params {
-                        write!(f, "{sep}{param}")?;
-                        sep = ", ";
-                    }
-                    write!(f, ")")?;
-                }
                 write!(f, ":\n")?;
                 for (address, insn) in &block.insns {
                     writeln!(f, "  {address}:   {insn}")?;
@@ -1820,19 +1804,6 @@ mod lir {
         }
 
         #[test]
-        fn test_return_block_param() {
-            let mut function = Function::new();
-            let block = function.new_block();
-            let v0 = function.push_block_param(block);
-            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![v0.into()] });
-            assert_ir(&function, expect![[r#"
-                fn {
-                   0: label l0(v0):
-                   1:   Return v0
-                }"#]])
-        }
-
-        #[test]
         fn test_return_phy_reg() {
             let mut function = Function::new();
             let block = function.new_block();
@@ -1894,23 +1865,6 @@ mod lir {
                    1:   v0 <- Move 3
                    2:   v1 <- Add v0, 4
                    3:   Return v1
-                }"#]])
-        }
-
-        #[test]
-        fn test_add_block_params() {
-            let mut function = Function::new();
-            let block = function.new_block();
-            let v0 = function.push_block_param(block);
-            let v1 = function.push_block_param(block);
-            let v2 = function.new_vreg();
-            function.push_insn(block, Insn { dst: Some(v2.into()), op: Opcode::Add, operands: vec![v0.into(), v1.into()] });
-            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![v2.into()] });
-            assert_ir(&function, expect![[r#"
-                fn {
-                   0: label l0(v0, v1):
-                   1:   v2 <- Add v0, v1
-                   2:   Return v2
                 }"#]])
         }
     }
