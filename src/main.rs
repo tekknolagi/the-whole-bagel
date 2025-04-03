@@ -1534,6 +1534,388 @@ mod hir {
     }
 }
 
+mod lir {
+    #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug)]
+    struct Address(usize);
+
+    impl Address {
+        fn next(self) -> Self {
+            Self(self.0 + 1)
+        }
+    }
+
+    impl std::fmt::Display for Address {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "{:2x}", self.0)
+        }
+    }
+
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    struct Label(usize);
+
+    impl std::fmt::Display for Label {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "l{}", self.0)
+        }
+    }
+
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    struct Vreg(usize);
+
+    impl std::fmt::Display for Vreg {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "v{}", self.0)
+        }
+    }
+
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    struct Reg(usize);
+
+    impl std::fmt::Display for Reg {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "r{}", self.0)
+        }
+    }
+
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    enum Operand {
+        Vreg(Vreg),
+        Reg(Reg),
+        Stack(i16),
+        Imm(u32),
+    }
+
+    impl From<Vreg> for Operand {
+        fn from(v: Vreg) -> Self { Operand::Vreg(v) }
+    }
+
+    impl From<Reg> for Operand {
+        fn from(v: Reg) -> Self { Operand::Reg(v) }
+    }
+
+    impl std::fmt::Display for Operand {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            match self {
+                Operand::Vreg(vreg) => write!(f, "{vreg}"),
+                Operand::Reg(reg) => write!(f, "{reg}"),
+                Operand::Stack(offset) => write!(f, "stack@{offset}"),
+                Operand::Imm(val) => write!(f, "{val}"),
+            }
+        }
+    }
+
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    enum Destination {
+        Vreg(Vreg),
+        Reg(Reg),
+        Stack(i16),
+    }
+
+    impl From<Vreg> for Destination {
+        fn from(v: Vreg) -> Self { Destination::Vreg(v) }
+    }
+
+    impl From<Reg> for Destination {
+        fn from(v: Reg) -> Self { Destination::Reg(v) }
+    }
+
+    impl std::fmt::Display for Destination {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            match self {
+                Destination::Vreg(vreg) => write!(f, "{vreg}"),
+                Destination::Reg(reg) => write!(f, "{reg}"),
+                Destination::Stack(offset) => write!(f, "stack@{offset}"),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    enum Opcode {
+        Move,
+        Add,
+        Call,
+        Return,
+        Jump(Label),
+        IfTrue(Label),
+        IfFalse(Label),
+    }
+
+    #[derive(Debug, Clone)]
+    struct Insn {
+        dst: Option<Destination>,
+        op: Opcode,
+        operands: Vec<Operand>,
+    }
+
+    impl std::fmt::Display for Insn {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            let Insn { dst, op, operands } = self;
+            if let Some(dst) = dst {
+                write!(f, "{dst} <- ")?;
+            }
+            write!(f, "{op:?}")?;
+            let mut sep = " ";
+            for operand in operands {
+                write!(f, "{sep}{operand}")?;
+                sep = ", ";
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct Block {
+        label: Label,
+        params: Vec<Vreg>,
+        insns: Vec<(Address, Insn)>,
+    }
+
+    impl Block {
+        fn new(label: Label) -> Self {
+            Self { label, params: Default::default(), insns: Default::default() }
+        }
+    }
+
+    #[derive(Debug)]
+    struct Function {
+        blocks: Vec<(Address, Block)>,
+        next_vreg: usize,
+        next_addr: usize,
+    }
+
+    impl Function {
+        fn new() -> Self {
+            Self { blocks: Default::default(), next_vreg: 0, next_addr: 0 }
+        }
+
+        fn new_block(&mut self) -> Label {
+            let result = Label(self.blocks.len());
+            let addr = self.new_address();
+            self.blocks.push((addr, Block::new(result)));
+            result
+        }
+
+        fn new_vreg(&mut self) -> Vreg {
+            let result = Vreg(self.next_vreg);
+            self.next_vreg += 1;
+            result
+        }
+
+        fn new_address(&mut self) -> Address {
+            let result = Address(self.next_addr);
+            self.next_addr += 1;
+            result
+        }
+
+        fn push_insn(&mut self, block: Label, insn: Insn) {
+            let addr = self.new_address();
+            self.blocks[block.0].1.insns.push((addr, insn));
+        }
+
+        fn push_block_param(&mut self, block: Label) -> Vreg {
+            let result = self.new_vreg();
+            self.blocks[block.0].1.params.push(result);
+            result
+        }
+
+        fn live_in(&self, block: Label) -> Vec<Vreg> {
+            vec![]
+        }
+    }
+
+    impl std::fmt::Display for Function {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            writeln!(f, "fn {{")?;
+            for (address, block) in &self.blocks {
+                write!(f, "  {address}: label {}", block.label)?;
+                if !block.params.is_empty() {
+                    write!(f, "(")?;
+                    let mut sep = "";
+                    for param in &block.params {
+                        write!(f, "{sep}{param}")?;
+                        sep = ", ";
+                    }
+                    write!(f, ")")?;
+                }
+                write!(f, ":\n")?;
+                for (address, insn) in &block.insns {
+                    writeln!(f, "  {address}:   {insn}")?;
+                }
+            }
+            write!(f, "}}")
+        }
+    }
+
+    fn main() {
+        println!("Hello, world!");
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use expect_test::{expect, Expect};
+
+        #[track_caller]
+        pub fn assert_ir(function: &Function, expected_hir: Expect) {
+            let actual_hir = format!("{function}");
+            expected_hir.assert_eq(&actual_hir);
+        }
+
+        #[test]
+        fn test_empty_function() {
+            let function = Function::new();
+            assert_ir(&function, expect![[r#"
+                fn {
+                }"#]])
+        }
+
+        #[test]
+        fn test_empty_block() {
+            let mut function = Function::new();
+            function.new_block();
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                }"#]])
+        }
+
+        #[test]
+        fn test_return_constant() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Imm(5)] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                   1:   Return 5
+                }"#]])
+        }
+
+        #[test]
+        fn test_return_stack() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Stack(8)] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                   1:   Return stack@8
+                }"#]])
+        }
+
+        #[test]
+        fn test_multiple_blocks() {
+            let mut function = Function::new();
+            let block0 = function.new_block();
+            function.push_insn(block0, Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Imm(3)] });
+            let block1 = function.new_block();
+            function.push_insn(block1, Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Imm(4)] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                   1:   Return 3
+                   2: label l1:
+                   3:   Return 4
+                }"#]])
+        }
+
+        #[test]
+        fn test_return_block_param() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            let v0 = function.push_block_param(block);
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![v0.into()] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0(v0):
+                   1:   Return v0
+                }"#]])
+        }
+
+        #[test]
+        fn test_return_phy_reg() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![Reg(0).into()] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                   1:   Return r0
+                }"#]])
+        }
+
+        #[test]
+        fn test_move_stack() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            function.push_insn(block, Insn { dst: Some(Destination::Stack(8)), op: Opcode::Move, operands: vec![Operand::Imm(3)] });
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Stack(8)] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                   1:   stack@8 <- Move 3
+                   2:   Return stack@8
+                }"#]])
+        }
+
+        #[test]
+        fn test_add_vreg_vreg() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            let v0 = function.new_vreg();
+            let v1 = function.new_vreg();
+            let v2 = function.new_vreg();
+            function.push_insn(block, Insn { dst: Some(v0.into()), op: Opcode::Move, operands: vec![Operand::Imm(3)] });
+            function.push_insn(block, Insn { dst: Some(v1.into()), op: Opcode::Move, operands: vec![Operand::Imm(4)] });
+            function.push_insn(block, Insn { dst: Some(v2.into()), op: Opcode::Add, operands: vec![v0.into(), v1.into()] });
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![v2.into()] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                   1:   v0 <- Move 3
+                   2:   v1 <- Move 4
+                   3:   v2 <- Add v0, v1
+                   4:   Return v2
+                }"#]])
+        }
+
+        #[test]
+        fn test_add_vreg_imm() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            let v0 = function.new_vreg();
+            let v1 = function.new_vreg();
+            function.push_insn(block, Insn { dst: Some(v0.into()), op: Opcode::Move, operands: vec![Operand::Imm(3)] });
+            function.push_insn(block, Insn { dst: Some(v1.into()), op: Opcode::Add, operands: vec![v0.into(), Operand::Imm(4)] });
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![v1.into()] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0:
+                   1:   v0 <- Move 3
+                   2:   v1 <- Add v0, 4
+                   3:   Return v1
+                }"#]])
+        }
+
+        #[test]
+        fn test_add_block_params() {
+            let mut function = Function::new();
+            let block = function.new_block();
+            let v0 = function.push_block_param(block);
+            let v1 = function.push_block_param(block);
+            let v2 = function.new_vreg();
+            function.push_insn(block, Insn { dst: Some(v2.into()), op: Opcode::Add, operands: vec![v0.into(), v1.into()] });
+            function.push_insn(block, Insn { dst: None, op: Opcode::Return, operands: vec![v2.into()] });
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: label l0(v0, v1):
+                   1:   v2 <- Add v0, v1
+                   2:   Return v2
+                }"#]])
+        }
+    }
+}
+
 mod runtime {
     #[repr(transparent)]
     pub struct Object {
