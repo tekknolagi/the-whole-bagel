@@ -33,6 +33,7 @@ class Type:
 
 Any = Type("Any")
 Object = Any.add_child("Object")
+Instance = Object.add_child("Instance")
 Int = Object.add_child("Int")
 SmallInt = Int.add_child("SmallInt")
 LargeInt = Int.add_child("LargeInt")

@@ -625,6 +625,7 @@ mod hir {
                     }
                     ty
                 }
+                Opcode::Call if self.is_a(insn.operands[0], TClass) => TInstance,
                 _ => TAny,
             }
         }
@@ -3500,6 +3501,26 @@ print a;",
               }
             }
         "#]])
+    }
+
+    #[test]
+    fn test_call_class_args() {
+        check("class C {}
+            C(1, 2);", expect![[r#"
+                Entry: fn0
+                fn0: fun <toplevel>() (entry bb0) {
+                  bb0 {
+                    v0:Frame = NewFrame
+                    v2:Class = NewClass(C, v1)
+                    Store(@0) v0, v2
+                    v5:SmallInt = Const(Int(1))
+                    v6:SmallInt = Const(Int(2))
+                    v7:Instance = Call v2, v5, v6
+                    v8:Nil = Const(Nil)
+                    Return v8
+                  }
+                }
+            "#]])
     }
 }
 
