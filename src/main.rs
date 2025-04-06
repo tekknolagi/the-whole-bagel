@@ -636,7 +636,7 @@ mod hir {
             while changed {
                 changed = false;
                 for block_id in &rpo {
-                    for insn_id in &self.blocks[block_id.0].insns {
+                    for insn_id in self.blocks[block_id.0].phis.iter().chain(&self.blocks[block_id.0].insns) {
                         let insn_id = self.find(*insn_id);
                         let old_type = self.insn_types[insn_id.0];
                         let new_type = self.infer_type(insn_id);
@@ -1920,7 +1920,7 @@ mod parser_tests {
                 Branch(bb1)
               }
               bb1 {
-                v6 = Phi v1, v4
+                v6:SmallInt = Phi v1, v4
                 Print v6
                 v8:Nil = Const(Nil)
                 Return v8
@@ -1945,7 +1945,7 @@ mod parser_tests {
                 Branch(bb1)
               }
               bb1 {
-                v6 = Phi v1, v4
+                v6:SmallInt = Phi v1, v4
                 v7:CBool = IsTruthy v6
                 CondBranch(bb3, bb4) v7
               }
@@ -1954,7 +1954,7 @@ mod parser_tests {
                 Branch(bb3)
               }
               bb3 {
-                v11 = Phi v6, v9
+                v11:SmallInt = Phi v6, v9
                 Print v11
                 v13:Nil = Const(Nil)
                 Return v13
