@@ -1465,8 +1465,7 @@ mod hir {
                         LValue::Insn(..) => return Err(ParseError::CannotAssignTo(lhs)),
                         LValue::Name(name) => {
                             let rhs = self.parse_(&mut env, next_prec)?;
-                            self.store_local(&mut env, name, rhs)?;
-                            lhs
+                            LValue::Insn(self.store_local(&mut env, name, rhs)?)
                         }
                         LValue::Attr(obj, name) => {
                             let rhs = self.parse_(&mut env, next_prec)?;
@@ -2076,10 +2075,9 @@ print a;",
                 v3:SmallInt = Const(Int(2))
                 Store(@0) v0, v3
                 v5:Any = Load(@0) v0
-                v6:Any = Load(@0) v0
-                Print v6
-                v8:Nil = Const(Nil)
-                Return v8
+                Print v5
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -2108,17 +2106,15 @@ print c;",
                 Store(@2) v0, v5
                 v7:Any = Load(@2) v0
                 Store(@1) v0, v7
-                v9:Any = Load(@1) v0
-                Store(@0) v0, v9
-                v11:Any = Load(@0) v0
-                v12:Any = Load(@0) v0
+                Store(@0) v0, v7
+                v10:Any = Load(@0) v0
+                Print v10
+                v12:Any = Load(@1) v0
                 Print v12
-                v14:Any = Load(@1) v0
+                v14:Any = Load(@2) v0
                 Print v14
-                v16:Any = Load(@2) v0
-                Print v16
-                v18:Nil = Const(Nil)
-                Return v18
+                v16:Nil = Const(Nil)
+                Return v16
               }
             }
         "#]])
@@ -2186,22 +2182,20 @@ print a;
                 CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v9:SmallInt = Const(Int(4))
-                Store(@0) v0, v9
-                v11:Any = Load(@0) v0
+                v8:SmallInt = Const(Int(4))
+                Store(@0) v0, v8
                 Branch(bb3)
               }
               bb1 {
                 v6:SmallInt = Const(Int(3))
                 Store(@0) v0, v6
-                v8:Any = Load(@0) v0
                 Branch(bb3)
               }
               bb3 {
-                v14:Any = Load(@0) v0
-                Print v14
-                v16:Nil = Const(Nil)
-                Return v16
+                v12:Any = Load(@0) v0
+                Print v12
+                v14:Nil = Const(Nil)
+                Return v14
               }
             }
         "#]])
@@ -2321,8 +2315,8 @@ print a;
                 CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v19:Nil = Const(Nil)
-                Return v19
+                v18:Nil = Const(Nil)
+                Return v18
               }
               bb2 {
                 v11:Any = Load(@0) v0
@@ -2331,7 +2325,6 @@ print a;
                 v14:SmallInt = Const(Int(1))
                 v15:Object = Add v13, v14
                 Store(@0) v0, v15
-                v17:Any = Load(@0) v0
                 Branch(bb1)
               }
             }
@@ -2968,10 +2961,9 @@ print a;
                 v7:Any = Load(@1) v0
                 Store(@0) v0, v7
                 v9:Any = Load(@0) v0
-                v10:Any = Load(@0) v0
-                Print v10
-                v12:Nil = Const(Nil)
-                Return v12
+                Print v9
+                v11:Nil = Const(Nil)
+                Return v11
               }
             }
         "#]])
@@ -3289,11 +3281,11 @@ print a;",
                 Store(@0) v0, v1
                 v3:SmallInt = Const(Int(2))
                 Store(@0) v0, v3
-                v6:SmallInt = Const(Int(3))
-                Store(@0) v0, v6
-                Print v6
-                v11:Nil = Const(Nil)
-                Return v11
+                v5:SmallInt = Const(Int(3))
+                Store(@0) v0, v5
+                Print v5
+                v9:Nil = Const(Nil)
+                Return v9
               }
             }
         "#]])
@@ -3314,8 +3306,8 @@ print a;",
                 Store(@0) v0, v1
                 Store(@0) v0, v1
                 Print v1
-                v8:Nil = Const(Nil)
-                Return v8
+                v7:Nil = Const(Nil)
+                Return v7
               }
             }
         "#]])
@@ -3339,8 +3331,8 @@ print a;",
                 Store(@1) v0, v3
                 Store(@0) v0, v3
                 Print v3
-                v10:Nil = Const(Nil)
-                Return v10
+                v9:Nil = Const(Nil)
+                Return v9
               }
             }
         "#]])
@@ -3372,8 +3364,8 @@ print c;",
                 Print v5
                 Print v5
                 Print v5
-                v18:Nil = Const(Nil)
-                Return v18
+                v16:Nil = Const(Nil)
+                Return v16
               }
             }
         "#]])
@@ -3424,8 +3416,8 @@ print a;",
                 CondBranch(bb1, bb2) v4
               }
               bb2 {
-                v9:SmallInt = Const(Int(4))
-                Store(@0) v0, v9
+                v8:SmallInt = Const(Int(4))
+                Store(@0) v0, v8
                 Branch(bb3)
               }
               bb1 {
@@ -3434,10 +3426,10 @@ print a;",
                 Branch(bb3)
               }
               bb3 {
-                v18:SmallInt = Phi v6, v9
-                Print v18
-                v16:Nil = Const(Nil)
-                Return v16
+                v16:SmallInt = Phi v6, v8
+                Print v16
+                v14:Nil = Const(Nil)
+                Return v14
               }
             }
         "#]])
@@ -3458,22 +3450,22 @@ print a;",
                 Branch(bb1)
               }
               bb1 {
-                v21:Object = Phi v1, v15
+                v20:Object = Phi v1, v15
                 v5:SmallInt = Const(Int(10))
-                v6:Int = GuardInt v21
+                v6:Int = GuardInt v20
                 v7:Int = GuardInt v5
                 v8:Bool = Less v6, v7
                 v9:CBool = IsTruthy v8
                 CondBranch(bb2, bb3) v9
               }
               bb3 {
-                v19:Nil = Const(Nil)
-                Return v19
+                v18:Nil = Const(Nil)
+                Return v18
               }
               bb2 {
-                Print v21
+                Print v20
                 v14:SmallInt = Const(Int(1))
-                v15:Object = Add v21, v14
+                v15:Object = Add v20, v14
                 Store(@0) v0, v15
                 Branch(bb1)
               }
@@ -3497,8 +3489,8 @@ print a;",
                 Store(@1) v0, v5
                 Store(@0) v0, v5
                 Print v5
-                v12:Nil = Const(Nil)
-                Return v12
+                v11:Nil = Const(Nil)
+                Return v11
               }
             }
         "#]])
