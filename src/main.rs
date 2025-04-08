@@ -616,6 +616,7 @@ mod hir {
                 Opcode::IsTruthy => TCBool,
                 Opcode::NewFrame => TFrame,
                 Opcode::NewClass(_) => TClass,
+                Opcode::NewClosure(_) => TClosure,
                 Opcode::GuardInt => TInt,
                 Opcode::Less | Opcode::LessEqual | Opcode::Greater | Opcode::GreaterEqual => TBool,
                 Opcode::Phi => {
@@ -1825,7 +1826,7 @@ mod parser_tests {
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2344,7 +2345,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2396,7 +2397,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2419,7 +2420,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2443,7 +2444,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2469,7 +2470,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2499,7 +2500,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
                 v4:Nil = Const(Nil)
@@ -2534,7 +2535,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
                 v4:Any = Call v3
@@ -2562,7 +2563,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
                 v4:SmallInt = Const(Int(1))
@@ -2591,7 +2592,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
                 v4:SmallInt = Const(Int(1))
@@ -2622,7 +2623,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:SmallInt = Const(Int(1))
                 v4:Any = Load(@0) v0
@@ -2654,7 +2655,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:SmallInt = Const(Int(1))
                 v4:Any = Load(@0) v0
@@ -2690,7 +2691,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Any = Load(@0) v0
                 v4:SmallInt = Const(Int(1))
@@ -2723,7 +2724,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2749,7 +2750,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2794,7 +2795,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2822,7 +2823,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -2853,7 +2854,7 @@ print a;
                 fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
                     v0:Frame = NewFrame
-                    v1:Any = NewClosure(fn1)
+                    v1:Closure = NewClosure(fn1)
                     Store(@0) v0, v1
                     v3:Any = Load(@0) v0
                     v4:Any = GuardInstance v3
@@ -2880,7 +2881,7 @@ print a;
                 fn0: fun <toplevel>() (entry bb0) {
                   bb0 {
                     v0:Frame = NewFrame
-                    v1:Any = NewClosure(fn1)
+                    v1:Closure = NewClosure(fn1)
                     Store(@0) v0, v1
                     v3:Any = Load(@0) v0
                     v4:SmallInt = Const(Int(1))
@@ -2907,7 +2908,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3
@@ -3174,7 +3175,7 @@ print a;
             fn0: fun <toplevel>() (entry bb0) {
               bb0 {
                 v0:Frame = NewFrame
-                v1:Any = NewClosure(fn1)
+                v1:Closure = NewClosure(fn1)
                 Store(@0) v0, v1
                 v3:Nil = Const(Nil)
                 Return v3

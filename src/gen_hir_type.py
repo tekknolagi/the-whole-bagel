@@ -46,6 +46,7 @@ Class = Object.add_child("Class")
 Function = Object.add_child("Function")
 Nil = Object.add_child("Nil")
 Frame = Object.add_child("Frame")
+Closure = Object.add_child("Closure")
 
 Primitive = Any.add_child("Primitive")
 CInt = Primitive.add_child("CInt")

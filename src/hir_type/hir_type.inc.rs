@@ -13,24 +13,25 @@ pub const TFunction: Type = Type::from_bits(0x100);
 pub const TNil: Type = Type::from_bits(0x200);
 pub const TImmediate: Type = Type::from_bits(0x232);
 pub const TFrame: Type = Type::from_bits(0x400);
-pub const TObject: Type = Type::from_bits(0x7ff);
-pub const TCInt8: Type = Type::from_bits(0x800);
-pub const TCInt16: Type = Type::from_bits(0x1000);
-pub const TCInt32: Type = Type::from_bits(0x2000);
-pub const TCInt64: Type = Type::from_bits(0x4000);
-pub const TCSigned: Type = Type::from_bits(0x7800);
-pub const TCUInt8: Type = Type::from_bits(0x8000);
-pub const TCUInt16: Type = Type::from_bits(0x10000);
-pub const TCUInt32: Type = Type::from_bits(0x20000);
-pub const TCUInt64: Type = Type::from_bits(0x40000);
-pub const TCUnsigned: Type = Type::from_bits(0x78000);
-pub const TCInt: Type = Type::from_bits(0x7f800);
-pub const TCBool: Type = Type::from_bits(0x80000);
-pub const TPrimitive: Type = Type::from_bits(0xff800);
-pub const TVoid: Type = Type::from_bits(0x100000);
-pub const TAny: Type = Type::from_bits(0x1fffff);
-pub const NUM_TYPE_BITS: usize = 21;
-pub const ALL_TYPES: [(&'static str, Type); 31] = [
+pub const TClosure: Type = Type::from_bits(0x800);
+pub const TObject: Type = Type::from_bits(0xfff);
+pub const TCInt8: Type = Type::from_bits(0x1000);
+pub const TCInt16: Type = Type::from_bits(0x2000);
+pub const TCInt32: Type = Type::from_bits(0x4000);
+pub const TCInt64: Type = Type::from_bits(0x8000);
+pub const TCSigned: Type = Type::from_bits(0xf000);
+pub const TCUInt8: Type = Type::from_bits(0x10000);
+pub const TCUInt16: Type = Type::from_bits(0x20000);
+pub const TCUInt32: Type = Type::from_bits(0x40000);
+pub const TCUInt64: Type = Type::from_bits(0x80000);
+pub const TCUnsigned: Type = Type::from_bits(0xf0000);
+pub const TCInt: Type = Type::from_bits(0xff000);
+pub const TCBool: Type = Type::from_bits(0x100000);
+pub const TPrimitive: Type = Type::from_bits(0x1ff000);
+pub const TVoid: Type = Type::from_bits(0x200000);
+pub const TAny: Type = Type::from_bits(0x3fffff);
+pub const NUM_TYPE_BITS: usize = 22;
+pub const ALL_TYPES: [(&'static str, Type); 32] = [
     ("Any", TAny),
     ("Void", TVoid),
     ("Primitive", TPrimitive),
@@ -47,6 +48,7 @@ pub const ALL_TYPES: [(&'static str, Type); 31] = [
     ("CInt16", TCInt16),
     ("CInt8", TCInt8),
     ("Object", TObject),
+    ("Closure", TClosure),
     ("Frame", TFrame),
     ("Immediate", TImmediate),
     ("Nil", TNil),
