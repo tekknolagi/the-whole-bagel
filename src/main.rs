@@ -512,78 +512,6 @@ mod hir {
             Ok(())
         }
 
-        pub fn unbox_locals(&mut self) {
-            // TODO(max): Whole-heap modeling with escapes
-            // TODO(max): Take into account aliasing
-            // TODO(max): Allocation sinking and removal
-            fn join(left: &Vec<InsnSet>, right: &Vec<InsnSet>) -> Vec<InsnSet> {
-                assert_eq!(left.len(), right.len());
-                left.into_iter().zip(right).map(|(l, r)| l.union(r)).collect()
-            }
-            let empty_state = vec![InsnSet::new(); self.num_locals];
-            let mut block_entry = vec![empty_state.clone(); self.blocks.len()];
-            let rpo = self.rpo();
-            loop {
-                let mut changed = false;
-                for block_id in &rpo {
-                    let mut env: Vec<_> = block_entry[block_id.0].clone();
-                    for insn_id in &self.blocks[block_id.0].insns {
-                        let Insn { opcode, operands } = &self.insns[insn_id.0];
-                        match opcode {
-                            Opcode::Store(slot) => {
-                                env[slot.0] = InsnSet::one(operands[1]);
-                            }
-                            Opcode::Load(slot) => {
-                                env[slot.0] = InsnSet::one(*insn_id);
-                            }
-                            _ => {}
-                        }
-                    }
-                    for succ in self.succs(*block_id) {
-                        let new = join(&block_entry[succ.0], &env);
-                        if block_entry[succ.0] != new {
-                            block_entry[succ.0] = new;
-                            changed = true;
-                        }
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
-            for block_id in &rpo {
-                let mut env: Vec<_> = std::mem::take(&mut block_entry[block_id.0]);
-                let insns = self.blocks[block_id.0].insns.clone();
-                for insn_id in insns {
-                    let Insn { opcode, operands } = &self.insns[insn_id.0];
-                    match opcode {
-                        Opcode::Store(slot) => {
-                            env[slot.0] = InsnSet::one(operands[1]);
-                        }
-                        Opcode::Load(slot) => {
-                            let operands = &env[slot.0];
-                            match operands.len() {
-                                0 => panic!("Should have at least one value"),
-                                1 => {
-                                    let replacement = self.find(operands.get_single());
-                                    self.insn_types[replacement.0] = self.infer_type(replacement);
-                                    self.make_equal_to(insn_id, replacement);
-                                    // TODO(max): Modify env to reflect the new value?
-                                }
-                                _ => {
-                                    let phi = self.push_insn(*block_id, Opcode::Phi, operands.as_vec().into());
-                                    self.insn_types[phi.0] = self.infer_type(phi);
-                                    self.make_equal_to(insn_id, phi);
-                                    // TODO(max): Modify env to reflect the new value?
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
         fn type_of(&self, insn_id: InsnId) -> Type {
             let insn_id = self.find(insn_id);
             self.insn_types[insn_id.0]
@@ -608,7 +536,6 @@ mod hir {
                 Opcode::Abort => TVoid,
                 Opcode::Print => TVoid,
                 Opcode::Return | Opcode::Branch(_) | Opcode::CondBranch(_, _) => TVoid,
-                Opcode::Store(_) => TVoid,
                 Opcode::Add if self.is_a(insn.operands[0], TInt) && self.is_a(insn.operands[1], TInt) => TInt,
                 Opcode::Add if self.is_a(insn.operands[0], TFloat) && self.is_a(insn.operands[1], TFloat) => TFloat,
                 Opcode::Add if self.is_a(insn.operands[0], TStr) && self.is_a(insn.operands[1], TStr) => TStr,
@@ -671,8 +598,6 @@ mod hir {
                 Opcode::CondBranch(..) => true,
                 Opcode::Phi => false,
                 Opcode::NewFrame => false,
-                Opcode::Load(_) => false,
-                Opcode::Store(_) => true,
                 Opcode::LoadAttr(_) => true,
                 Opcode::StoreAttr(_) => true,
                 Opcode::GuardInt => true,
@@ -909,8 +834,6 @@ mod hir {
         NewFrame,
         NewClass(ClassDef),
         NewClosure(FunId),
-        Load(Slot),
-        Store(Slot),
         LoadAttr(NameId),
         StoreAttr(NameId),
         GuardInt,
@@ -1030,6 +953,8 @@ mod hir {
         pub prog: Program,
         context_stack: Vec<Context>,
         current_def: Vec<HashMap<BlockId, InsnId>>,
+        incomplete_phis: HashMap<BlockId, HashMap<Slot, InsnId>>,
+        phi_block: HashMap<InsnId, BlockId>,
     }
 
     #[derive(Debug)]
@@ -1054,7 +979,7 @@ mod hir {
 
     impl Parser<'_> {
         pub fn from_lexer<'a>(lexer: &'a mut Lexer<'a>) -> Parser<'a> {
-            Parser { tokens: lexer.peekable(), prog: Program::new(), context_stack: vec![], current_def: vec![] }
+            Parser { tokens: lexer.peekable(), prog: Program::new(), context_stack: vec![], current_def: vec![], incomplete_phis: Default::default(), phi_block: Default::default() }
         }
 
         fn enter_fun(&mut self, fun: FunId) {
@@ -1064,27 +989,32 @@ mod hir {
             self.enter_block(block);
         }
 
-        fn add_phi_operands(&mut self, variable: Slot, phi: InsnId) {
-        }
-
         fn leave_fun(&mut self) -> Result<(), ParseError> {
             let fun = self.fun();
             if !self.prog.funs[fun.0].is_terminated(self.block()) {
                 let nil = self.push_op(Opcode::Const(Value::Nil));
                 self.push_insn(Opcode::Return, smallvec![nil]);
             }
-            let mut preds = vec![self.prog.funs[fun.0].blocks.len(); BlockSet::new()];
+            let mut preds = vec![BlockSet::new(); self.prog.funs[fun.0].blocks.len()];
             for block in self.prog.funs[fun.0].rpo() {
                 for succ in self.prog.funs[fun.0].succs(block) {
                     preds[succ.0].insert(block);
                 }
             }
             for block in self.prog.funs[fun.0].rpo() {
-                for variable in self.incomplete_phis[block.0] {
-                    let phi = self.incomplete_phis[block.0].get(variable).unwrap();
-                    let phi_block = self.phi_block[phi.
-
-                    // self.add_phi_operands(variable, );
+                let phis = std::mem::take(&mut self.incomplete_phis.get_mut(&block));
+                for (variable, phi) in phis {
+                    let mut new_operands: Operands = smallvec![];
+                    let phi_block = self.phi_block[&phi];
+                    for pred in preds[phi_block.0].iter() {
+                        new_operands.push(self.read_variable_sealed(variable, pred));
+                    }
+                    match &mut self.prog.funs[fun.0].insns[phi.0] {
+                        Insn { opcode: Opcode::Phi, operands } => {
+                            operands.extend(new_operands);
+                        }
+                        _ => panic!("Unexpected non-phi"),
+                    }
                 }
             }
             self.prog.funs[fun.0].infer_types();
@@ -1319,25 +1249,6 @@ mod hir {
             self.expect(Token::Semicolon)
         }
 
-        fn write_local(&mut self, slot: Slot, value: InsnId) {
-            if slot.0 >= self.current_def.len() {
-                self.current_def.resize(slot.0 + 1, HashMap::new());
-            }
-            let block = self.block();
-            self.current_def[slot.0].insert(block, value);
-            let fun_id = self.fun();
-            let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
-            *num_locals = std::cmp::max(*num_locals, slot.0) + 1;
-            self.push_insn(Opcode::Store(slot), smallvec![self.frame(), value]);
-        }
-
-        fn read_local(&mut self, slot: Slot) -> InsnId {
-            let fun_id = self.fun();
-            let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
-            *num_locals = std::cmp::max(*num_locals, slot.0) + 1;
-            self.push_insn(Opcode::Load(slot), smallvec![self.frame()])
-        }
-
         fn parse_function(&mut self, env: &mut Env) -> Result<(), ParseError> {
             let name = self.expect_ident()?;
             let fun = self.prog.push_fun(name.clone());
@@ -1398,11 +1309,15 @@ mod hir {
             self.parse_(env, 0)
         }
 
+        fn read_variable_sealed(&mut self, variable: Slot, block: BlockId) -> InsnId {
+            todo!()
+        }
+
         fn read_variable_recursive(&mut self, variable: Slot, block: BlockId) -> InsnId {
             // No blocks are sealed. Slow but simpler
             let result = self.push_insn(Opcode::Phi, smallvec![]);
             self.phi_block.insert(result, block);
-            self.incomplete_phis[block.0].insert(variable, result);
+            self.incomplete_phis.get_mut(&block).insert(variable, result);
             self.write_variable(variable, block, result);
             result
         }
@@ -1433,7 +1348,7 @@ mod hir {
 
         fn define_local(&mut self, env: &mut Env, name: NameId, value: InsnId) {
             let slot = env.define(name);
-            self.write_local(slot, value);
+            self.write_variable(slot, self.block(), value);
         }
 
         fn store_local(&mut self, env: &Env, name: NameId, value: InsnId) -> Result<InsnId, ParseError> {
@@ -1441,7 +1356,7 @@ mod hir {
                 return Err(ParseError::CannotAssignToThis);
             }
             match env.lookup(name) {
-                Some(slot) => { self.write_local(slot, value); Ok(value) }
+                Some(slot) => { self.write_variable(slot, self.block(), value); Ok(value) }
                 None => return Err(ParseError::UnboundName(self.prog.name(name))),
             }
         }
@@ -3277,8 +3192,6 @@ mod opt_tests {
         for fun_idx in 0..actual.funs.len() {
             let name = actual.name(actual.funs[fun_idx].name);
             let fun = &mut actual.funs[fun_idx];
-            fun.unbox_locals();
-            fun.check().or_else(|e| Err(ParseError::InvalidIr(name, e))).unwrap();
             fun.infer_types();
             fun.check().or_else(|e| Err(ParseError::InvalidIr(name, e))).unwrap();
             fun.eliminate_dead_code();
