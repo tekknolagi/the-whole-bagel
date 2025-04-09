@@ -1029,6 +1029,7 @@ mod hir {
         tokens: std::iter::Peekable<&'a mut Lexer<'a>>,
         pub prog: Program,
         context_stack: Vec<Context>,
+        current_def: Vec<HashMap<BlockId, InsnId>>,
     }
 
     #[derive(Debug)]
@@ -1053,7 +1054,7 @@ mod hir {
 
     impl Parser<'_> {
         pub fn from_lexer<'a>(lexer: &'a mut Lexer<'a>) -> Parser<'a> {
-            Parser { tokens: lexer.peekable(), prog: Program::new(), context_stack: vec![] }
+            Parser { tokens: lexer.peekable(), prog: Program::new(), context_stack: vec![], current_def: vec![] }
         }
 
         fn enter_fun(&mut self, fun: FunId) {
@@ -1063,11 +1064,28 @@ mod hir {
             self.enter_block(block);
         }
 
+        fn add_phi_operands(&mut self, variable: Slot, phi: InsnId) {
+        }
+
         fn leave_fun(&mut self) -> Result<(), ParseError> {
             let fun = self.fun();
             if !self.prog.funs[fun.0].is_terminated(self.block()) {
                 let nil = self.push_op(Opcode::Const(Value::Nil));
                 self.push_insn(Opcode::Return, smallvec![nil]);
+            }
+            let mut preds = vec![self.prog.funs[fun.0].blocks.len(); BlockSet::new()];
+            for block in self.prog.funs[fun.0].rpo() {
+                for succ in self.prog.funs[fun.0].succs(block) {
+                    preds[succ.0].insert(block);
+                }
+            }
+            for block in self.prog.funs[fun.0].rpo() {
+                for variable in self.incomplete_phis[block.0] {
+                    let phi = self.incomplete_phis[block.0].get(variable).unwrap();
+                    let phi_block = self.phi_block[phi.
+
+                    // self.add_phi_operands(variable, );
+                }
             }
             self.prog.funs[fun.0].infer_types();
             let name = self.prog.funs[fun.0].name;
@@ -1302,6 +1320,11 @@ mod hir {
         }
 
         fn write_local(&mut self, slot: Slot, value: InsnId) {
+            if slot.0 >= self.current_def.len() {
+                self.current_def.resize(slot.0 + 1, HashMap::new());
+            }
+            let block = self.block();
+            self.current_def[slot.0].insert(block, value);
             let fun_id = self.fun();
             let num_locals = &mut self.prog.funs[fun_id.0].num_locals;
             *num_locals = std::cmp::max(*num_locals, slot.0) + 1;
@@ -1375,9 +1398,35 @@ mod hir {
             self.parse_(env, 0)
         }
 
+        fn read_variable_recursive(&mut self, variable: Slot, block: BlockId) -> InsnId {
+            // No blocks are sealed. Slow but simpler
+            let result = self.push_insn(Opcode::Phi, smallvec![]);
+            self.phi_block.insert(result, block);
+            self.incomplete_phis[block.0].insert(variable, result);
+            self.write_variable(variable, block, result);
+            result
+        }
+
+        fn read_variable(&mut self, variable: Slot, block: BlockId) -> InsnId {
+            if variable.0 >= self.current_def.len() {
+                self.current_def.resize(variable.0 + 1, HashMap::new());
+            }
+            if let Some(insn_id) = self.current_def[variable.0].get(&block) {
+                return *insn_id;
+            }
+            self.read_variable_recursive(variable, block)
+        }
+
+        fn write_variable(&mut self, variable: Slot, block: BlockId, value: InsnId) {
+            if variable.0 >= self.current_def.len() {
+                self.current_def.resize(variable.0 + 1, HashMap::new());
+            }
+            self.current_def[variable.0].insert(block, value);
+        }
+
         fn load_local(&mut self, env: &Env, name: NameId) -> Result<InsnId, ParseError> {
             match env.lookup(name) {
-                Some(slot) => Ok(self.read_local(slot)),
+                Some(slot) => Ok(self.read_variable(slot, self.block())),
                 None => return Err(ParseError::UnboundName(self.prog.name(name))),
             }
         }
