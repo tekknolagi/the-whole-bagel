@@ -1002,12 +1002,12 @@ mod hir {
                 }
             }
             for block in self.prog.funs[fun.0].rpo() {
-                let phis = std::mem::take(&mut self.incomplete_phis.get_mut(&block));
-                for (variable, phi) in phis {
+                let phis = std::mem::take(&mut self.incomplete_phis);
+                for (variable, phi) in &phis[&block] {
                     let mut new_operands: Operands = smallvec![];
                     let phi_block = self.phi_block[&phi];
                     for pred in preds[phi_block.0].iter() {
-                        new_operands.push(self.read_variable_sealed(variable, pred));
+                        new_operands.push(self.read_variable_sealed(*variable, pred));
                     }
                     match &mut self.prog.funs[fun.0].insns[phi.0] {
                         Insn { opcode: Opcode::Phi, operands } => {
