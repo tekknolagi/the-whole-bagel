@@ -124,8 +124,8 @@ impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T>, T: Copy {
         Self { set: self.set.union(&other.set).collect(), phantom: Default::default() }
     }
 
-    pub fn union_with(&mut self, other: &Self) -> Self {
-        self.set.union_with(other.set)
+    pub fn union_with(&mut self, other: &Self) {
+        self.set.union_with(&other.set)
     }
 
     pub fn contains(&self, item: T) -> bool {
@@ -1697,7 +1697,7 @@ mod lir {
             let result = Label(self.next_block);
             self.next_block += 1;
             if !self.block_ranges.is_empty() {
-                self.block_ranges.last().unwrap_mut().end = self.insns.len();
+                self.block_ranges.last_mut().unwrap().end = self.insns.len();
             }
             self.block_ranges.push(Range { start: self.insns.len(), end: 0 });
             self.insns.push(Insn { dst: None, op: Opcode::Block(result), operands: smallvec![] });
@@ -1705,11 +1705,11 @@ mod lir {
         }
 
         fn succs(&self, block: Label) -> Labels {
-            match self.insns[self.block_ranges[block.0].end-1].op {
+            match &self.insns[self.block_ranges[block.0].end-1].op {
                 Opcode::Return => Labels::new(),
-                Opcode::Jump(label) => smallvec![label],
-                Opcode::CondBranch(iftrue, iffalse) => smallvec![iftrue, iffalse],
-                op => panic!("unexpected op {op} should be a terminator"),
+                Opcode::Jump(label) => smallvec![*label],
+                Opcode::CondBranch(iftrue, iffalse) => smallvec![*iftrue, *iffalse],
+                op => panic!("unexpected op {op:?} should be a terminator"),
             }
         }
 
@@ -1722,6 +1722,26 @@ mod lir {
         fn push_insn(&mut self, insn: Insn) {
             self.insns.push(insn);
         }
+
+        // fn build_intervals(&mut self) {
+        //     // TODO(max): Figure out the "all blocks belonging to a loop are contiguous" bit
+        //     // ...
+        //     // Actually, instead, do normal liveness using dataflow. Then skip the special loop header bit
+        //     // let mut intervals = vec![vec![]; 
+        //     self.block_ranges.last().unwrap_mut().end = self.insns.len();
+        //     let mut live_in = vec![VregSet::new(); self.next_block];
+        //     for (block_idx, range) in self.block_ranges.iter().rev() {
+        //         let block = Label(block_idx);
+        //         let succs = self.succs(block);
+        //         let mut live = VregSet::new();
+        //         for succ in self.succs(block) {
+        //             live.union_with(live_in[succ.0]);
+        //         }
+        //         // TODO(max): Handle Phi (or block operands?)
+        //     }
+        //     // for insn in self.insns.iter().rev() {
+        //     // }
+        // }
     }
 
     impl std::fmt::Display for Function {
