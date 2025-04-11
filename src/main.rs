@@ -124,6 +124,10 @@ impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T>, T: Copy {
         Self { set: self.set.union(&other.set).collect(), phantom: Default::default() }
     }
 
+    pub fn union_with(&mut self, other: &Self) -> Self {
+        self.set.union_with(other.set)
+    }
+
     pub fn contains(&self, item: T) -> bool {
         self.set.contains(item.into())
     }
@@ -1535,6 +1539,9 @@ mod hir {
 }
 
 mod lir {
+    use crate::TypedBitSet;
+    use smallvec::{smallvec, SmallVec};
+
     #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug)]
     struct Address(usize);
 
@@ -1550,8 +1557,18 @@ mod lir {
         }
     }
 
+    #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug)]
+    struct Range {
+        start: usize,
+        end: usize,  // exclusive
+    }
+
     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
     struct Label(usize);
+
+    impl Label {
+        fn undef() -> Label { Label(!0usize) }
+    }
 
     impl std::fmt::Display for Label {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -1559,14 +1576,9 @@ mod lir {
         }
     }
 
-    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-    struct Vreg(usize);
+    define_id_type!("v", Vreg);
 
-    impl std::fmt::Display for Vreg {
-        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(f, "v{}", self.0)
-        }
-    }
+    type VregSet = TypedBitSet<Vreg>;
 
     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
     struct Reg(usize);
@@ -1637,15 +1649,17 @@ mod lir {
         Return,
         Block(Label),
         Jump(Label),
-        IfTrue(Label),
-        IfFalse(Label),
+        CondBranch(Label, Label),  // (iftrue, iffalse)
     }
+
+    type Operands = SmallVec::<[Operand; 2]>;
+    type Labels = SmallVec::<[Label; 2]>;
 
     #[derive(Debug, Clone)]
     struct Insn {
         dst: Option<Destination>,
         op: Opcode,
-        operands: Vec<Operand>,
+        operands: Operands,
     }
 
     impl std::fmt::Display for Insn {
@@ -1667,20 +1681,36 @@ mod lir {
     #[derive(Debug)]
     struct Function {
         insns: Vec<Insn>,
+        // TODO(max): This could probably be shrunk by doing a sliding 2-window over a list of
+        // starts or something
+        block_ranges: Vec<Range>,
         next_vreg: usize,
         next_block: usize,
     }
 
     impl Function {
         fn new() -> Self {
-            Self { insns: Default::default(), next_vreg: 0, next_block: 0 }
+            Self { insns: Default::default(), block_ranges: Default::default(), next_vreg: 0, next_block: 0 }
         }
 
         fn new_block(&mut self) -> Label {
             let result = Label(self.next_block);
             self.next_block += 1;
-            self.insns.push(Insn { dst: None, op: Opcode::Block(result), operands: vec![] });
+            if !self.block_ranges.is_empty() {
+                self.block_ranges.last().unwrap_mut().end = self.insns.len();
+            }
+            self.block_ranges.push(Range { start: self.insns.len(), end: 0 });
+            self.insns.push(Insn { dst: None, op: Opcode::Block(result), operands: smallvec![] });
             result
+        }
+
+        fn succs(&self, block: Label) -> Labels {
+            match self.insns[self.block_ranges[block.0].end-1].op {
+                Opcode::Return => Labels::new(),
+                Opcode::Jump(label) => smallvec![label],
+                Opcode::CondBranch(iftrue, iffalse) => smallvec![iftrue, iffalse],
+                op => panic!("unexpected op {op} should be a terminator"),
+            }
         }
 
         fn new_vreg(&mut self) -> Vreg {
@@ -1707,10 +1737,6 @@ mod lir {
             }
             write!(f, "}}")
         }
-    }
-
-    fn main() {
-        println!("Hello, world!");
     }
 
     #[cfg(test)]
@@ -1746,7 +1772,7 @@ mod lir {
         fn test_return_constant() {
             let mut function = Function::new();
             function.new_block();
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Imm(5)] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![Operand::Imm(5)] });
             assert_ir(&function, expect![[r#"
                 fn {
                    0: block l0:
@@ -1758,7 +1784,7 @@ mod lir {
         fn test_return_stack() {
             let mut function = Function::new();
             function.new_block();
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Stack(8)] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![Operand::Stack(8)] });
             assert_ir(&function, expect![[r#"
                 fn {
                    0: block l0:
@@ -1770,9 +1796,9 @@ mod lir {
         fn test_multiple_blocks() {
             let mut function = Function::new();
             function.new_block();
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Imm(3)] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![Operand::Imm(3)] });
             function.new_block();
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Imm(4)] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![Operand::Imm(4)] });
             assert_ir(&function, expect![[r#"
                 fn {
                    0: block l0:
@@ -1786,7 +1812,7 @@ mod lir {
         fn test_return_phy_reg() {
             let mut function = Function::new();
             function.new_block();
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![Reg(0).into()] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![Reg(0).into()] });
             assert_ir(&function, expect![[r#"
                 fn {
                    0: block l0:
@@ -1798,8 +1824,8 @@ mod lir {
         fn test_move_stack() {
             let mut function = Function::new();
             function.new_block();
-            function.push_insn(Insn { dst: Some(Destination::Stack(8)), op: Opcode::Move, operands: vec![Operand::Imm(3)] });
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![Operand::Stack(8)] });
+            function.push_insn(Insn { dst: Some(Destination::Stack(8)), op: Opcode::Move, operands: smallvec![Operand::Imm(3)] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![Operand::Stack(8)] });
             assert_ir(&function, expect![[r#"
                 fn {
                    0: block l0:
@@ -1815,10 +1841,10 @@ mod lir {
             let v0 = function.new_vreg();
             let v1 = function.new_vreg();
             let v2 = function.new_vreg();
-            function.push_insn(Insn { dst: Some(v0.into()), op: Opcode::Move, operands: vec![Operand::Imm(3)] });
-            function.push_insn(Insn { dst: Some(v1.into()), op: Opcode::Move, operands: vec![Operand::Imm(4)] });
-            function.push_insn(Insn { dst: Some(v2.into()), op: Opcode::Add, operands: vec![v0.into(), v1.into()] });
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![v2.into()] });
+            function.push_insn(Insn { dst: Some(v0.into()), op: Opcode::Move, operands: smallvec![Operand::Imm(3)] });
+            function.push_insn(Insn { dst: Some(v1.into()), op: Opcode::Move, operands: smallvec![Operand::Imm(4)] });
+            function.push_insn(Insn { dst: Some(v2.into()), op: Opcode::Add, operands: smallvec![v0.into(), v1.into()] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![v2.into()] });
             assert_ir(&function, expect![[r#"
                 fn {
                    0: block l0:
@@ -1835,9 +1861,9 @@ mod lir {
             function.new_block();
             let v0 = function.new_vreg();
             let v1 = function.new_vreg();
-            function.push_insn(Insn { dst: Some(v0.into()), op: Opcode::Move, operands: vec![Operand::Imm(3)] });
-            function.push_insn(Insn { dst: Some(v1.into()), op: Opcode::Add, operands: vec![v0.into(), Operand::Imm(4)] });
-            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: vec![v1.into()] });
+            function.push_insn(Insn { dst: Some(v0.into()), op: Opcode::Move, operands: smallvec![Operand::Imm(3)] });
+            function.push_insn(Insn { dst: Some(v1.into()), op: Opcode::Add, operands: smallvec![v0.into(), Operand::Imm(4)] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![v1.into()] });
             assert_ir(&function, expect![[r#"
                 fn {
                    0: block l0:
