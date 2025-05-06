@@ -1792,60 +1792,58 @@ mod lir {
 
         fn compute_intervals(&mut self, live_in: Vec<VregSet>) -> Vec<Interval> {
             let mut intervals: Vec<Interval> = vec![smallvec![]; self.next_vreg];
+            // for each block b in reverse order do
             for (block_idx, range) in self.block_ranges.iter().enumerate().rev() {
                 let block = Label(block_idx);
                 let mut live = VregSet::new();
                 let succs = self.succs(block);
+                // live = union of successor.liveIn for each successor of b
                 for succ in succs {
                     live.union_with(&live_in[succ.0]);
                 }
+                // for each phi function phi of successors of b do
                 // TODO(max): Handle phi from successors
                 // for succ in succs {
                 //   for phi in succ {
                 //     live.insert(phi.input_of(block));
                 //   }
                 // }
+                // for each opd in live do
                 for vreg in live.iter() {
+                    // intervals[opd].addRange(b.from, b.to)
                     intervals[vreg.0].push(*range);
                 }
+                // for each operation op of b in reverse order do
                 for (idx, insn) in self.insns[range.from..range.to].iter().enumerate().rev() {
+                    // for each output operand opd of op do
                     if let Some(Destination::Vreg(dst)) = insn.dst {
+                        // intervals[opd].setFrom(op.id)
                         intervals[dst.0].last_mut().unwrap().from = idx;
+                        // live.remove(opd)
                         live.remove(dst);
                     }
                     if !matches!(insn.op, Opcode::Phi(_)) {
                         // Phi is handled separately in the incoming block (see above)
+                        // for each input opd of op do
                         for operand in &insn.operands {
                             if let Operand::Vreg(vreg) = operand {
+                                // intervals[opd].addRange(b.from, op.id)
                                 intervals[vreg.0].push(Range { from: range.from, to: idx });
+                                // live.add(opd)
                                 live.insert(*vreg);
                             }
                         }
                     }
                 }
+                // for each phi function phi of b do
+                //   live.remove(phi.output)
+                // TODO
+
+                // We intentionally don't do b.liveIn = live because we've already computed
+                // liveness in compute_live_in and we're not doing the whole contiguous loop thing.
             }
             intervals
         }
-
-        // fn build_intervals(&mut self) {
-        //     // TODO(max): Figure out the "all blocks belonging to a loop are contiguous" bit
-        //     // ...
-        //     // Actually, instead, do normal liveness using dataflow. Then skip the special loop header bit
-        //     // let mut intervals = vec![vec![]; 
-        //     self.block_ranges.last().unwrap_mut().end = self.insns.len();
-        //     let mut live_in = vec![VregSet::new(); self.next_block];
-        //     for (block_idx, range) in self.block_ranges.iter().rev() {
-        //         let block = Label(block_idx);
-        //         let succs = self.succs(block);
-        //         let mut live = VregSet::new();
-        //         for succ in self.succs(block) {
-        //             live.union_with(live_in[succ.0]);
-        //         }
-        //         // TODO(max): Handle Phi (or block operands?)
-        //     }
-        //     // for insn in self.insns.iter().rev() {
-        //     // }
-        // }
     }
 
     impl std::fmt::Display for Function {
