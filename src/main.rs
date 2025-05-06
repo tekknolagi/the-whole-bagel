@@ -91,7 +91,7 @@ impl Interner {
 
 // ===== End matklad string interning =====
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 struct TypedBitSet<T> {
     set: BitSet,
     phantom: std::marker::PhantomData<T>,
@@ -134,6 +134,10 @@ impl<T> TypedBitSet<T> where T: From<usize>, usize: From<T>, T: Copy {
 
     pub fn insert(&mut self, item: T) -> bool {
         self.set.insert(item.into())
+    }
+
+    pub fn remove(&mut self, item: T) -> bool {
+        self.set.remove(item.into())
     }
 
     pub fn as_vec(&self) -> Vec<T> {
@@ -1559,9 +1563,17 @@ mod lir {
 
     #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Debug)]
     struct Range {
-        start: usize,
-        end: usize,  // exclusive
+        from: usize,
+        to: usize,  // exclusive
     }
+
+    impl Range {
+        fn new(from: usize, to: usize) -> Self {
+            Self { from, to }
+        }
+    }
+
+    type Interval = SmallVec::<[Range; 2]>;
 
     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
     struct Label(usize);
@@ -1650,6 +1662,7 @@ mod lir {
         Block(Label),
         Jump(Label),
         CondBranch(Label, Label),  // (iftrue, iffalse)
+        Phi(Labels),
     }
 
     type Operands = SmallVec::<[Operand; 2]>;
@@ -1697,15 +1710,21 @@ mod lir {
             let result = Label(self.next_block);
             self.next_block += 1;
             if !self.block_ranges.is_empty() {
-                self.block_ranges.last_mut().unwrap().end = self.insns.len();
+                self.block_ranges.last_mut().unwrap().to = self.insns.len();
             }
-            self.block_ranges.push(Range { start: self.insns.len(), end: 0 });
+            self.block_ranges.push(Range { from: self.insns.len(), to: 0 });
             self.insns.push(Insn { dst: None, op: Opcode::Block(result), operands: smallvec![] });
             result
         }
 
+        fn finalize(&mut self) {
+            self.block_ranges.last_mut().unwrap().to = self.insns.len();
+        }
+
         fn succs(&self, block: Label) -> Labels {
-            match &self.insns[self.block_ranges[block.0].end-1].op {
+            let range = self.block_ranges[block.0];
+            assert!(range.to > 0, "range.to is {}", range.to);
+            match &self.insns[range.to-1].op {
                 Opcode::Return => Labels::new(),
                 Opcode::Jump(label) => smallvec![*label],
                 Opcode::CondBranch(iftrue, iffalse) => smallvec![*iftrue, *iffalse],
@@ -1721,6 +1740,91 @@ mod lir {
 
         fn push_insn(&mut self, insn: Insn) {
             self.insns.push(insn);
+        }
+
+        fn compute_live_in(&mut self) -> Vec<VregSet> {
+            // We have no such machinery that guarantees all blocks within a loop are contiguous in
+            // the LIR. Building such machinery would be more complex. Instead, we do a standard
+            // iterative dataflow analysis to compute liveness. This is more precise and probably
+            // takes roughly the same amount of time anyway.
+            let mut live_in = vec![VregSet::new(); self.next_block];
+            // TODO(max): Loop until fixpoint
+            loop {
+                let mut changed = false;
+                for (block_idx, range) in self.block_ranges.iter().enumerate().rev() {
+                    let block = Label(block_idx);
+                    let succs = self.succs(block);
+                    let mut live = VregSet::new();
+                    for succ in succs {
+                        live.union_with(&live_in[succ.0]);
+                    }
+                    // TODO(max): Handle phi from successors
+                    // for succ in succs {
+                    //   for phi in succ {
+                    //     live.insert(phi.input_of(block));
+                    //   }
+                    // }
+                    for insn in self.insns[range.from..range.to].iter().rev() {
+                        if let Some(Destination::Vreg(dst)) = insn.dst {
+                            live.remove(dst);
+                        }
+                        if !matches!(insn.op, Opcode::Phi(_)) {
+                            // Phi is handled separately in the incoming block (see above)
+                            for operand in &insn.operands {
+                                if let Operand::Vreg(vreg) = operand {
+                                    live.insert(*vreg);
+                                }
+                            }
+                        }
+                    }
+                    // TODO(max): If changed
+                    if live_in[block_idx] != live {
+                        changed = true;
+                        live_in[block_idx] = live;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            live_in
+        }
+
+        fn compute_intervals(&mut self, live_in: Vec<VregSet>) -> Vec<Interval> {
+            let mut intervals: Vec<Interval> = vec![smallvec![]; self.next_vreg];
+            for (block_idx, range) in self.block_ranges.iter().enumerate().rev() {
+                let block = Label(block_idx);
+                let mut live = VregSet::new();
+                let succs = self.succs(block);
+                for succ in succs {
+                    live.union_with(&live_in[succ.0]);
+                }
+                // TODO(max): Handle phi from successors
+                // for succ in succs {
+                //   for phi in succ {
+                //     live.insert(phi.input_of(block));
+                //   }
+                // }
+                for vreg in live.iter() {
+                    intervals[vreg.0].push(*range);
+                }
+                for (idx, insn) in self.insns[range.from..range.to].iter().enumerate().rev() {
+                    if let Some(Destination::Vreg(dst)) = insn.dst {
+                        intervals[dst.0].last_mut().unwrap().from = idx;
+                        live.remove(dst);
+                    }
+                    if !matches!(insn.op, Opcode::Phi(_)) {
+                        // Phi is handled separately in the incoming block (see above)
+                        for operand in &insn.operands {
+                            if let Operand::Vreg(vreg) = operand {
+                                intervals[vreg.0].push(Range { from: range.from, to: idx });
+                                live.insert(*vreg);
+                            }
+                        }
+                    }
+                }
+            }
+            intervals
         }
 
         // fn build_intervals(&mut self) {
@@ -1891,6 +1995,32 @@ mod lir {
                    2:   v1 <- Add v0, 4
                    3:   Return v1
                 }"#]])
+        }
+
+        #[test]
+        fn test_build_intervals() {
+            let mut function = Function::new();
+            function.new_block();
+            let v0 = function.new_vreg();
+            let v1 = function.new_vreg();
+            function.push_insn(Insn { dst: Some(v0.into()), op: Opcode::Move, operands: smallvec![Operand::Imm(3)] });
+            function.push_insn(Insn { dst: Some(v1.into()), op: Opcode::Add, operands: smallvec![v0.into(), Operand::Imm(4)] });
+            function.push_insn(Insn { dst: None, op: Opcode::Return, operands: smallvec![v1.into()] });
+            function.finalize();
+            assert_ir(&function, expect![[r#"
+                fn {
+                   0: block l0:
+                   1:   v0 <- Move 3
+                   2:   v1 <- Add v0, 4
+                   3:   Return v1
+                }"#]]);
+            let live_in = function.compute_live_in();
+            assert_eq!(live_in, vec![VregSet::new()]);
+            let intervals: Vec<Interval> = function.compute_intervals(live_in);
+            assert_eq!(intervals, vec![
+                [Range::new(1, 2)].into(),
+                [Range::new(2, 3)].into(),
+            ]);
         }
     }
 }
